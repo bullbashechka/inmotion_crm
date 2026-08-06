@@ -13,7 +13,8 @@ CRM — desktop-first веб-приложение с независимо раз
 ## Объём
 
 - Адаптировать `di-sukharev/vibe` под Bun workspaces: `webapp`, `backend`, `packages/contracts`.
-- Настроить React, TypeScript, Vite, TanStack Router/Query/Form, Zod, Tailwind, shadcn/ui, Radix UI и Recharts.
+- Настроить React, TypeScript, Vite, TanStack Router/Query/Form, Zod, Tailwind CSS, shadcn/ui, Radix UI и Recharts.
+- Зафиксировать Tailwind CSS как основной способ стилизации и shadcn/ui как базовый набор типовых UI-компонентов для всех frontend-задач.
 - Настроить Hono REST API с `/api/v1`, единым форматом ошибок и OpenAPI из общих Zod-схем.
 - Зафиксировать зависимости единым lock-файлом и команды lint/typecheck/test/build.
 
@@ -33,6 +34,7 @@ CRM — desktop-first веб-приложение с независимо раз
 - Тестовый endpoint доступен по `/api/v1`, документирован в OpenAPI и типобезопасно вызывается из SPA.
 - Typecheck обнаруживает несовместимое изменение контракта одновременно в frontend и backend.
 - В сборке frontend отсутствуют привилегированные серверные секреты.
+- В SPA подключены Tailwind CSS и shadcn/ui; тестовая страница использует минимум один компонент shadcn/ui, стилизованный через Tailwind CSS.
 
 ## Зависимости
 
