@@ -1,0 +1,26 @@
+{
+  "name": "@inmotion-crm/backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "wrangler deploy --dry-run",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types",
+    "types:check": "wrangler types --check",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/zod-openapi": "1.5.1",
+    "@inmotion-crm/contracts": "workspace:*",
+    "hono": "4.12.31",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.20.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10",
+    "wrangler": "4.119.0"
+  }
+}

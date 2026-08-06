@@ -1,0 +1,5 @@
+# Локальные значения без секретов. Не добавляйте в этот файл production-данные.
+APP_ENV=local
+APP_BUILD_VERSION=dev
+SUPPORTED_CLIENT_VERSIONS=dev
+CORS_ORIGINS=http://localhost:5173
