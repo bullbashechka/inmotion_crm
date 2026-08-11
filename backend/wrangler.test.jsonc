@@ -1,21 +1,9 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "inmotion-crm-api",
+  "name": "inmotion-crm-api-tests",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-06",
   "compatibility_flags": ["nodejs_compat"],
-  "hyperdrive": [
-    {
-      "binding": "HYPERDRIVE_FRESH",
-      "id": "00000000000000000000000000000000"
-    }
-  ],
-  "observability": {
-    "enabled": true,
-    "logs": {
-      "head_sampling_rate": 1
-    }
-  },
   "vars": {
     "APP_ENV": "local",
     "APP_BUILD_VERSION": "dev",

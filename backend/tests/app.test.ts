@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { createApp } from "../src/app";
-import worker from "../src/index";
+import worker, { loadRequestDatabaseAdapter } from "../src/index";
 
 const runtime = {
   appEnvironment: "local" as const,
@@ -11,6 +11,10 @@ const runtime = {
 };
 
 describe("system API", () => {
+  test("loads the request-scoped database adapter without opening a connection", async () => {
+    await expect(loadRequestDatabaseAdapter()).resolves.toMatchObject({ withRequestDatabase: expect.any(Function) });
+  });
+
   test("returns the shared health contract for the current client", async () => {
     const response = await createApp(runtime).request("http://api.test/api/v1/system/health", {
       headers: { "X-Client-Version": "dev" },
@@ -66,6 +70,7 @@ describe("system API", () => {
         headers: { "X-Client-Version": "dev" },
       }) as never,
       {
+        HYPERDRIVE_FRESH: {} as Hyperdrive,
         APP_ENV: "local",
         APP_BUILD_VERSION: "dev",
         SUPPORTED_CLIENT_VERSIONS: "dev",

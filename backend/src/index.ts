@@ -1,6 +1,11 @@
 import { createApp } from "./app";
 import { parseRuntimeConfig } from "./config";
 
+// Keep the Worker bundle coupled to the adapter without opening a connection for health checks.
+export async function loadRequestDatabaseAdapter() {
+  return import("./db/client");
+}
+
 export default {
   fetch(request, env, executionContext) {
     return createApp(

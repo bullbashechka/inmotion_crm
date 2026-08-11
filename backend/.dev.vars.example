@@ -3,3 +3,6 @@ APP_ENV=local
 APP_BUILD_VERSION=dev
 SUPPORTED_CLIENT_VERSIONS=dev
 CORS_ORIGINS=http://localhost:5173
+# Set this only in your local shell or an ignored backend/.dev.vars file.
+# It must point at an isolated development database; do not put credentials in wrangler.jsonc.
+# CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE_FRESH=postgres://crm_runtime:password@localhost:5432/inmotion_crm

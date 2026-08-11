@@ -1,0 +1,3 @@
+ALTER TABLE "crm"."appointments" DROP CONSTRAINT "appointments_subject_exactly_one";--> statement-breakpoint
+CREATE UNIQUE INDEX "clinic_settings_one_active_unique" ON "crm"."clinic_settings" USING btree ((true)) WHERE "crm"."clinic_settings"."archived_at" IS NULL;--> statement-breakpoint
+ALTER TABLE "crm"."appointments" ADD CONSTRAINT "appointments_subject_at_least_one" CHECK (num_nonnulls("crm"."appointments"."lead_id", "crm"."appointments"."patient_id") >= 1);

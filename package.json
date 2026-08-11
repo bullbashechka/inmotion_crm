@@ -19,6 +19,6 @@
     "test": "bun run --cwd packages/contracts test && bun run --cwd backend test && bun run --cwd webapp test",
     "build": "bun run --cwd packages/contracts build && bun run --cwd backend build && bun run --cwd webapp build",
     "architecture:check": "bun scripts/architecture-check.mjs",
-    "check": "bun run lint && bun run typecheck && bun run test && bun run build && bun run architecture:check"
+    "check": "bun run lint && bun run typecheck && bun run test && bun run build && bun run architecture:check && bun run --cwd backend types:check && bun run --cwd backend db:schema:check"
   }
 }
