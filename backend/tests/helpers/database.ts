@@ -24,7 +24,7 @@ function roleUrl(databaseUrl: string, role: string, password: string): string {
 }
 
 async function assertDisposableGuard(admin: Client): Promise<void> {
-  const marker = await admin.query<{ marker: string | null }>("SELECT obj_description(oid, 'pg_database') AS marker FROM pg_database WHERE datname = current_database()");
+  const marker = await admin.query<{ marker: string | null }>("SELECT shobj_description(oid, 'pg_database') AS marker FROM pg_database WHERE datname = current_database()");
   if (marker.rows[0]?.marker !== "inmotion-task002-disposable") throw new Error("TEST_DATABASE_URL must point to a database with COMMENT 'inmotion-task002-disposable'.");
   const existingRoles = await admin.query<{ count: string }>("SELECT count(*) FROM pg_roles WHERE rolname = ANY($1::text[])", [crmRoles]);
   if (existingRoles.rows[0]?.count !== "0") throw new Error("Disposable cluster must not contain pre-existing CRM roles.");

@@ -29,6 +29,48 @@
       "when": 1786439038815,
       "tag": "0003_timezone_canonical",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786605886062,
+      "tag": "0004_polite_quicksilver",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786605897172,
+      "tag": "0005_integrity-security",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786608128245,
+      "tag": "0006_needy_giant_girl",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786608135702,
+      "tag": "0007_integrity-boundaries",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786610630818,
+      "tag": "0008_quick_wrecking_crew",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786610905599,
+      "tag": "0009_idempotency-capability-boundary",
+      "breakpoints": true
     }
   ]
 }

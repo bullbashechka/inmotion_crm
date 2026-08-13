@@ -10,7 +10,7 @@ export default defineConfig({
   ssr: {
     optimizeDeps: {
       rolldownOptions: {
-        external: ["crypto", "dns", "fs", "net", "path", "stream", "tls", "node:module"],
+        external: ["crypto", "dns", "events", "fs", "net", "path", "stream", "string_decoder", "tls", "util", "node:module"],
       },
     },
   },

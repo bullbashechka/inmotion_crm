@@ -66,6 +66,7 @@ DO $$
 BEGIN
   EXECUTE format('REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database());
   EXECUTE format('REVOKE ALL ON DATABASE %I FROM crm_owner, crm_migrations, crm_runtime', current_database());
+  EXECUTE format('GRANT CREATE ON DATABASE %I TO crm_owner', current_database());
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO crm_migrations, crm_runtime', current_database());
 END
 $$;

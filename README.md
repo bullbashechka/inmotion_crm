@@ -49,3 +49,9 @@ TEST_DATABASE_DISPOSABLE_CLUSTER=1 TEST_DATABASE_URL=postgres://postgres:...@loc
 ```
 
 `test:db` и `test:db:performance` намеренно завершаются ошибкой без `TEST_DATABASE_URL` и `TEST_DATABASE_DISPOSABLE_CLUSTER=1`: тесты меняют роли на уровне всего кластера. Обычный suite их исключает. `bun run --cwd backend db:schema:check` проверяет Drizzle Kit snapshot и каталог миграций.
+
+### Гарантии целостности
+
+Критические команды должны использовать `backend/src/db/integrity.ts`: этот слой объединяет idempotency claim, бизнес-изменение, immutable audit и сохранение terminal response в одну PostgreSQL-транзакцию. Повтор с тем же `(scope, operation, key)` возвращает сохранённый результат, а тот же ключ с другим request fingerprint отклоняется. Runtime не может напрямую создавать или менять idempotency rows: PostgreSQL сам задаёт claim/audit time, создаёт private 256-bit completion capability с TTL и разрешает только связанный с ней transition `pending → completed`.
+
+`crm.audit_entries` доступен runtime-роле только для чтения и добавления: непустая причина обязательна, а DB trigger игнорирует supplied audit timestamps и сам рассчитывает `expires_at`. Срок хранения хранится в `crm.audit_retention_policies`, меняется только audited DB-функцией с `expectedVersion` (`0` при создании) и может менять сохранённый `expires_at` только до его истечения. Очистка выполняется узкой no-argument функцией базы и удаляет только уже истёкшие записи. Архивирование/восстановление выполнено через versioned allowlist, а не динамический SQL по имени таблицы. Подробности и правила добавления новых сущностей — в [docs/database-foundation.md](docs/database-foundation.md).

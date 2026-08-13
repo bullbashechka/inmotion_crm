@@ -5,6 +5,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   numeric,
   pgSchema,
   text,
@@ -205,6 +206,79 @@ export const appointmentParticipants = crm.table("appointment_participants", {
   check("appointment_participants_version_positive", positiveVersion(table.version)),
 ]);
 
+/**
+ * Append-only evidence for critical actions. There is deliberately no updated
+ * timestamp or version: corrections are represented by a new audit event.
+ */
+export const auditEntries = crm.table("audit_entries", {
+  id: uuid("id").primaryKey(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  actorEmployeeId: uuid("actor_employee_id").references(() => employees.id, { onDelete: "restrict" }),
+  action: text("action").notNull(),
+  category: text("category").notNull(),
+  viewScope: text("view_scope").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: uuid("entity_id").notNull(),
+  reason: text("reason").notNull(),
+  before: jsonb("before"),
+  after: jsonb("after"),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+}, (table) => [
+  index("audit_entries_occurred_at_idx").on(table.occurredAt),
+  index("audit_entries_expiry_idx").on(table.expiresAt).where(sql`${table.expiresAt} IS NOT NULL`),
+  index("audit_entries_entity_idx").on(table.entityType, table.entityId, table.occurredAt),
+  check("audit_entries_action_not_blank", nonBlank(table.action)),
+  check("audit_entries_category_not_blank", nonBlank(table.category)),
+  check("audit_entries_view_scope_not_blank", nonBlank(table.viewScope)),
+  check("audit_entries_entity_type_not_blank", nonBlank(table.entityType)),
+  check("audit_entries_reason_not_blank", nonBlank(table.reason)),
+]);
+
+/** A completed command response is retained so a network retry can replay it. */
+export const idempotencyKeys = crm.table("idempotency_keys", {
+  id: uuid("id").primaryKey(),
+  scope: text("scope").notNull(),
+  operation: text("operation").notNull(),
+  key: text("key").notNull(),
+  requestFingerprint: text("request_fingerprint").notNull(),
+  state: text("state").notNull().default("pending"),
+  responseStatus: integer("response_status"),
+  response: jsonb("response"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+  claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true, mode: "date" }).defaultNow(),
+}, (table) => [
+  unique("idempotency_keys_scope_operation_key_unique").on(table.scope, table.operation, table.key),
+  check("idempotency_keys_scope_not_blank", nonBlank(table.scope)),
+  check("idempotency_keys_operation_not_blank", nonBlank(table.operation)),
+  check("idempotency_keys_key_not_blank", nonBlank(table.key)),
+  check("idempotency_keys_fingerprint_not_blank", nonBlank(table.requestFingerprint)),
+  check("idempotency_keys_state_valid", sql`${table.state} IN ('pending', 'completed')`),
+  check("idempotency_keys_response_status_valid", sql`${table.responseStatus} IS NULL OR ${table.responseStatus} BETWEEN 100 AND 599`),
+  check("idempotency_keys_completed_result", sql`(${table.state} = 'pending' AND ${table.responseStatus} IS NULL AND ${table.response} IS NULL AND ${table.completedAt} IS NULL AND ${table.claimExpiresAt} IS NOT NULL) OR (${table.state} = 'completed' AND ${table.responseStatus} IS NOT NULL AND ${table.response} IS NOT NULL AND ${table.completedAt} IS NOT NULL)`),
+]);
+
+/** Private proof for a pending command; crm_runtime has no direct access. */
+export const idempotencyCompletionCapabilities = crm.table("idempotency_completion_capabilities", {
+  idempotencyKeyId: uuid("idempotency_key_id").primaryKey().references(() => idempotencyKeys.id, { onDelete: "cascade" }),
+  capability: text("capability").notNull(),
+}, (table) => [
+  check("idempotency_completion_capabilities_format", sql`${table.capability} ~ '^[0-9a-f]{64}$'`),
+]);
+
+/** One current policy. Historical policy changes remain in the append-only audit. */
+export const auditRetentionPolicies = crm.table("audit_retention_policies", {
+  id: uuid("id").primaryKey(),
+  retentionDays: integer("retention_days"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  version: integer("version").notNull().default(1),
+}, (table) => [
+  uniqueIndex("audit_retention_policies_one_current_unique").on(sql`(true)`),
+  check("audit_retention_policies_days_positive", sql`${table.retentionDays} IS NULL OR ${table.retentionDays} > 0`),
+  check("audit_retention_policies_version_positive", positiveVersion(table.version)),
+]);
+
 export const appointmentSessionRelations = relations(appointmentSessions, ({ one, many }) => ({
   service: one(services, { fields: [appointmentSessions.serviceId], references: [services.id] }),
   primaryEmployee: one(employees, { fields: [appointmentSessions.primaryEmployeeId], references: [employees.id] }),
@@ -213,7 +287,7 @@ export const appointmentSessionRelations = relations(appointmentSessions, ({ one
   participants: many(appointmentParticipants),
 }));
 
-export const employeeRelations = relations(employees, ({ many }) => ({ assignedLeads: many(leads), responsibleMedicalCases: many(medicalCases), primaryAppointmentSessions: many(appointmentSessions) }));
+export const employeeRelations = relations(employees, ({ many }) => ({ assignedLeads: many(leads), responsibleMedicalCases: many(medicalCases), primaryAppointmentSessions: many(appointmentSessions), auditEntries: many(auditEntries) }));
 export const patientRelations = relations(patients, ({ many }) => ({ convertedLeads: many(leads), medicalCases: many(medicalCases), appointments: many(appointments), appointmentParticipants: many(appointmentParticipants) }));
 export const leadRelations = relations(leads, ({ one, many }) => ({ assignedEmployee: one(employees, { fields: [leads.assignedEmployeeId], references: [employees.id] }), convertedPatient: one(patients, { fields: [leads.convertedPatientId], references: [patients.id] }), appointments: many(appointments) }));
 export const medicalCaseRelations = relations(medicalCases, ({ one, many }) => ({ patient: one(patients, { fields: [medicalCases.patientId], references: [patients.id] }), responsibleEmployee: one(employees, { fields: [medicalCases.responsibleEmployeeId], references: [employees.id] }), appointments: many(appointments) }));
@@ -221,3 +295,4 @@ export const serviceRelations = relations(services, ({ many }) => ({ appointment
 export const roomRelations = relations(rooms, ({ many }) => ({ appointmentSessions: many(appointmentSessions) }));
 export const appointmentRelations = relations(appointments, ({ one, many }) => ({ session: one(appointmentSessions, { fields: [appointments.sessionId], references: [appointmentSessions.id] }), lead: one(leads, { fields: [appointments.leadId], references: [leads.id] }), patient: one(patients, { fields: [appointments.patientId], references: [patients.id] }), medicalCase: one(medicalCases, { fields: [appointments.medicalCaseId], references: [medicalCases.id] }), participants: many(appointmentParticipants) }));
 export const appointmentParticipantRelations = relations(appointmentParticipants, ({ one }) => ({ session: one(appointmentSessions, { fields: [appointmentParticipants.sessionId], references: [appointmentSessions.id] }), appointment: one(appointments, { fields: [appointmentParticipants.appointmentId], references: [appointments.id] }), patient: one(patients, { fields: [appointmentParticipants.patientId], references: [patients.id] }) }));
+export const auditEntryRelations = relations(auditEntries, ({ one }) => ({ actorEmployee: one(employees, { fields: [auditEntries.actorEmployeeId], references: [employees.id] }) }));
