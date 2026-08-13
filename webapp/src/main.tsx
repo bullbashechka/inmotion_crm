@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./app";
 import { getSystemHealth } from "./lib/api";
+import { AuthClient } from "./lib/auth";
 import { parseClientRuntimeConfig } from "./lib/runtime";
 import "./index.css";
 
@@ -13,12 +14,14 @@ const queryClient = new QueryClient({
     queries: { retry: false, refetchOnWindowFocus: false },
   },
 });
+const authClient = new AuthClient(runtime.apiUrl);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <App
         clientEnvironment={runtime.environment}
+        authClient={authClient}
         loadHealth={() => getSystemHealth(runtime.apiUrl, runtime.clientVersion)}
       />
     </QueryClientProvider>

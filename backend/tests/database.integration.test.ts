@@ -28,6 +28,9 @@ describe("database foundation", () => {
         await expect(admin.query("SELECT 1 FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid JOIN pg_roles member ON member.oid = m.member WHERE parent.rolname = 'crm_owner' AND member.rolname = 'crm_membership_probe'")).resolves.toMatchObject({ rowCount: 0 });
         const journal = await admin.query<{ count: string }>("SELECT count(*) FROM crm_internal.schema_migrations WHERE state = 'applied'");
         expect(journal.rows[0]?.count).toBe(String((await loadMigrations()).length));
+        await expect(runtime.query<{ count: string }>("SELECT count(*) FROM crm.roles WHERE system_kind IN ('leader', 'administrator', 'doctor', 'rehabilitologist', 'massage_therapist', 'physiotherapist')")).resolves.toMatchObject({ rows: [{ count: "6" }] });
+        await expect(runtime.query("DELETE FROM crm.roles")).rejects.toMatchObject({ code: "42501" });
+        await expect(runtime.query("DELETE FROM crm.auth_recovery_challenges")).rejects.toMatchObject({ code: "42501" });
 
         const createdAt = new Date("2026-01-01T19:30:00.000Z");
         await expect(runtime.query("INSERT INTO crm.clinic_settings (id, clinic_name, timezone, created_at, updated_at) VALUES ($1, 'Invalid', 'Not/A_Timezone', now(), now())", ["00000000-0000-7000-8000-000000000099"])).rejects.toMatchObject({ code: "23514" });

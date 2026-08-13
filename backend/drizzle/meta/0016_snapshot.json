@@ -1,0 +1,3848 @@
+{
+  "id": "dc10c2d4-f731-45fc-8790-51466a644ed3",
+  "prevId": "4faf4257-8cc1-412f-aa03-527dde23a135",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "crm.appointment_participants": {
+      "name": "appointment_participants",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "appointment_id": {
+          "name": "appointment_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attendance_status": {
+          "name": "attendance_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "appointment_participants_patient_idx": {
+          "name": "appointment_participants_patient_idx",
+          "columns": [
+            {
+              "expression": "patient_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "appointment_participants_appointment_session_patient_fk": {
+          "name": "appointment_participants_appointment_session_patient_fk",
+          "tableFrom": "appointment_participants",
+          "tableTo": "appointments",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "appointment_id",
+            "session_id",
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id",
+            "session_id",
+            "patient_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "appointment_participants_session_patient_unique": {
+          "name": "appointment_participants_session_patient_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "session_id",
+            "patient_id"
+          ]
+        },
+        "appointment_participants_appointment_unique": {
+          "name": "appointment_participants_appointment_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "appointment_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "appointment_participants_attendance_status_not_blank": {
+          "name": "appointment_participants_attendance_status_not_blank",
+          "value": "btrim(\"crm\".\"appointment_participants\".\"attendance_status\") <> ''"
+        },
+        "appointment_participants_version_positive": {
+          "name": "appointment_participants_version_positive",
+          "value": "\"crm\".\"appointment_participants\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.appointment_sessions": {
+      "name": "appointment_sessions",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "service_id": {
+          "name": "service_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "primary_employee_id": {
+          "name": "primary_employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ends_at": {
+          "name": "ends_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "capacity": {
+          "name": "capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "appointment_sessions_employee_starts_idx": {
+          "name": "appointment_sessions_employee_starts_idx",
+          "columns": [
+            {
+              "expression": "primary_employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"appointment_sessions\".\"archived_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "appointment_sessions_room_starts_idx": {
+          "name": "appointment_sessions_room_starts_idx",
+          "columns": [
+            {
+              "expression": "room_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"appointment_sessions\".\"archived_at\" IS NULL AND \"crm\".\"appointment_sessions\".\"room_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "appointment_sessions_service_idx": {
+          "name": "appointment_sessions_service_idx",
+          "columns": [
+            {
+              "expression": "service_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "appointment_sessions_status_starts_idx": {
+          "name": "appointment_sessions_status_starts_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"appointment_sessions\".\"archived_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "appointment_sessions_service_id_services_id_fk": {
+          "name": "appointment_sessions_service_id_services_id_fk",
+          "tableFrom": "appointment_sessions",
+          "tableTo": "services",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "service_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "appointment_sessions_primary_employee_id_employees_id_fk": {
+          "name": "appointment_sessions_primary_employee_id_employees_id_fk",
+          "tableFrom": "appointment_sessions",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "primary_employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "appointment_sessions_room_id_rooms_id_fk": {
+          "name": "appointment_sessions_room_id_rooms_id_fk",
+          "tableFrom": "appointment_sessions",
+          "tableTo": "rooms",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "room_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "appointment_sessions_range_valid": {
+          "name": "appointment_sessions_range_valid",
+          "value": "\"crm\".\"appointment_sessions\".\"ends_at\" > \"crm\".\"appointment_sessions\".\"starts_at\""
+        },
+        "appointment_sessions_capacity_positive": {
+          "name": "appointment_sessions_capacity_positive",
+          "value": "\"crm\".\"appointment_sessions\".\"capacity\" > 0"
+        },
+        "appointment_sessions_status_not_blank": {
+          "name": "appointment_sessions_status_not_blank",
+          "value": "btrim(\"crm\".\"appointment_sessions\".\"status\") <> ''"
+        },
+        "appointment_sessions_version_positive": {
+          "name": "appointment_sessions_version_positive",
+          "value": "\"crm\".\"appointment_sessions\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.appointments": {
+      "name": "appointments",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lead_id": {
+          "name": "lead_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "medical_case_id": {
+          "name": "medical_case_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "appointments_session_idx": {
+          "name": "appointments_session_idx",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "appointments_patient_idx": {
+          "name": "appointments_patient_idx",
+          "columns": [
+            {
+              "expression": "patient_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"appointments\".\"patient_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "appointments_medical_case_idx": {
+          "name": "appointments_medical_case_idx",
+          "columns": [
+            {
+              "expression": "medical_case_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"appointments\".\"medical_case_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "appointments_lead_idx": {
+          "name": "appointments_lead_idx",
+          "columns": [
+            {
+              "expression": "lead_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"appointments\".\"lead_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "appointments_session_id_appointment_sessions_id_fk": {
+          "name": "appointments_session_id_appointment_sessions_id_fk",
+          "tableFrom": "appointments",
+          "tableTo": "appointment_sessions",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "appointments_lead_id_leads_id_fk": {
+          "name": "appointments_lead_id_leads_id_fk",
+          "tableFrom": "appointments",
+          "tableTo": "leads",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "lead_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "appointments_patient_id_patients_id_fk": {
+          "name": "appointments_patient_id_patients_id_fk",
+          "tableFrom": "appointments",
+          "tableTo": "patients",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "appointments_medical_case_patient_fk": {
+          "name": "appointments_medical_case_patient_fk",
+          "tableFrom": "appointments",
+          "tableTo": "medical_cases",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "medical_case_id",
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id",
+            "patient_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "appointments_id_session_patient_unique": {
+          "name": "appointments_id_session_patient_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "session_id",
+            "patient_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "appointments_subject_at_least_one": {
+          "name": "appointments_subject_at_least_one",
+          "value": "num_nonnulls(\"crm\".\"appointments\".\"lead_id\", \"crm\".\"appointments\".\"patient_id\") >= 1"
+        },
+        "appointments_medical_case_requires_patient": {
+          "name": "appointments_medical_case_requires_patient",
+          "value": "\"crm\".\"appointments\".\"medical_case_id\" IS NULL OR \"crm\".\"appointments\".\"patient_id\" IS NOT NULL"
+        },
+        "appointments_status_not_blank": {
+          "name": "appointments_status_not_blank",
+          "value": "btrim(\"crm\".\"appointments\".\"status\") <> ''"
+        },
+        "appointments_version_positive": {
+          "name": "appointments_version_positive",
+          "value": "\"crm\".\"appointments\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.audit_entries": {
+      "name": "audit_entries",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "actor_employee_id": {
+          "name": "actor_employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "view_scope": {
+          "name": "view_scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "before": {
+          "name": "before",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "after": {
+          "name": "after",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "audit_entries_occurred_at_idx": {
+          "name": "audit_entries_occurred_at_idx",
+          "columns": [
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_entries_expiry_idx": {
+          "name": "audit_entries_expiry_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"audit_entries\".\"expires_at\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_entries_entity_idx": {
+          "name": "audit_entries_entity_idx",
+          "columns": [
+            {
+              "expression": "entity_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "audit_entries_actor_employee_id_employees_id_fk": {
+          "name": "audit_entries_actor_employee_id_employees_id_fk",
+          "tableFrom": "audit_entries",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "actor_employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "audit_entries_action_not_blank": {
+          "name": "audit_entries_action_not_blank",
+          "value": "btrim(\"crm\".\"audit_entries\".\"action\") <> ''"
+        },
+        "audit_entries_category_not_blank": {
+          "name": "audit_entries_category_not_blank",
+          "value": "btrim(\"crm\".\"audit_entries\".\"category\") <> ''"
+        },
+        "audit_entries_view_scope_not_blank": {
+          "name": "audit_entries_view_scope_not_blank",
+          "value": "btrim(\"crm\".\"audit_entries\".\"view_scope\") <> ''"
+        },
+        "audit_entries_entity_type_not_blank": {
+          "name": "audit_entries_entity_type_not_blank",
+          "value": "btrim(\"crm\".\"audit_entries\".\"entity_type\") <> ''"
+        },
+        "audit_entries_reason_not_blank": {
+          "name": "audit_entries_reason_not_blank",
+          "value": "btrim(\"crm\".\"audit_entries\".\"reason\") <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.audit_retention_policies": {
+      "name": "audit_retention_policies",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "retention_days": {
+          "name": "retention_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "audit_retention_policies_one_current_unique": {
+          "name": "audit_retention_policies_one_current_unique",
+          "columns": [
+            {
+              "expression": "(true)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "audit_retention_policies_days_positive": {
+          "name": "audit_retention_policies_days_positive",
+          "value": "\"crm\".\"audit_retention_policies\".\"retention_days\" IS NULL OR \"crm\".\"audit_retention_policies\".\"retention_days\" > 0"
+        },
+        "audit_retention_policies_version_positive": {
+          "name": "audit_retention_policies_version_positive",
+          "value": "\"crm\".\"audit_retention_policies\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.auth_bindings": {
+      "name": "auth_bindings",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "employment_epoch_id": {
+          "name": "employment_epoch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_namespace": {
+          "name": "provider_namespace",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_subject_id": {
+          "name": "provider_subject_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_marker": {
+          "name": "provider_marker",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ended_at": {
+          "name": "ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "auth_bindings_one_current_epoch_unique": {
+          "name": "auth_bindings_one_current_epoch_unique",
+          "columns": [
+            {
+              "expression": "employment_epoch_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"crm\".\"auth_bindings\".\"state\" IN ('reserved', 'confirmed', 'active')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "auth_bindings_employment_epoch_id_employment_epochs_id_fk": {
+          "name": "auth_bindings_employment_epoch_id_employment_epochs_id_fk",
+          "tableFrom": "auth_bindings",
+          "tableTo": "employment_epochs",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employment_epoch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "auth_bindings_provider_subject_unique": {
+          "name": "auth_bindings_provider_subject_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "provider_namespace",
+            "provider_subject_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "auth_bindings_namespace_not_blank": {
+          "name": "auth_bindings_namespace_not_blank",
+          "value": "btrim(\"crm\".\"auth_bindings\".\"provider_namespace\") <> ''"
+        },
+        "auth_bindings_marker_not_blank": {
+          "name": "auth_bindings_marker_not_blank",
+          "value": "btrim(\"crm\".\"auth_bindings\".\"provider_marker\") <> ''"
+        },
+        "auth_bindings_state_valid": {
+          "name": "auth_bindings_state_valid",
+          "value": "\"crm\".\"auth_bindings\".\"state\" IN ('reserved', 'confirmed', 'active', 'ended', 'quarantined')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.auth_login_attempts": {
+      "name": "auth_login_attempts",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "canonical_login": {
+          "name": "canonical_login",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employee_id": {
+          "name": "employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_attempted": {
+          "name": "provider_attempted",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "auth_login_attempts_employee_id_employees_id_fk": {
+          "name": "auth_login_attempts_employee_id_employees_id_fk",
+          "tableFrom": "auth_login_attempts",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "auth_login_attempts_login_not_blank": {
+          "name": "auth_login_attempts_login_not_blank",
+          "value": "btrim(\"crm\".\"auth_login_attempts\".\"canonical_login\") <> ''"
+        },
+        "auth_login_attempts_outcome_valid": {
+          "name": "auth_login_attempts_outcome_valid",
+          "value": "\"crm\".\"auth_login_attempts\".\"outcome\" IN ('succeeded', 'invalid_credentials', 'locked', 'inactive', 'provider_unavailable', 'reconciliation_required')"
+        },
+        "auth_login_attempts_provider_attempted_bool": {
+          "name": "auth_login_attempts_provider_attempted_bool",
+          "value": "\"crm\".\"auth_login_attempts\".\"provider_attempted\" IN (0, 1)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.auth_recovery_challenges": {
+      "name": "auth_recovery_challenges",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "employee_id": {
+          "name": "employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employment_epoch_id": {
+          "name": "employment_epoch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth_binding_id": {
+          "name": "auth_binding_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state_verifier_hash": {
+          "name": "state_verifier_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code_verifier_ciphertext": {
+          "name": "code_verifier_ciphertext",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recovery_grant_hash": {
+          "name": "recovery_grant_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "verified_at": {
+          "name": "verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "auth_recovery_challenges_one_active_per_employee_unique": {
+          "name": "auth_recovery_challenges_one_active_per_employee_unique",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"crm\".\"auth_recovery_challenges\".\"state\" IN ('pending', 'verified')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "auth_recovery_challenges_expiry_idx": {
+          "name": "auth_recovery_challenges_expiry_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "auth_recovery_challenges_employee_id_employees_id_fk": {
+          "name": "auth_recovery_challenges_employee_id_employees_id_fk",
+          "tableFrom": "auth_recovery_challenges",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "auth_recovery_challenges_employment_epoch_id_employment_epochs_id_fk": {
+          "name": "auth_recovery_challenges_employment_epoch_id_employment_epochs_id_fk",
+          "tableFrom": "auth_recovery_challenges",
+          "tableTo": "employment_epochs",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employment_epoch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "auth_recovery_challenges_auth_binding_id_auth_bindings_id_fk": {
+          "name": "auth_recovery_challenges_auth_binding_id_auth_bindings_id_fk",
+          "tableFrom": "auth_recovery_challenges",
+          "tableTo": "auth_bindings",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "auth_binding_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "auth_recovery_challenges_state_valid": {
+          "name": "auth_recovery_challenges_state_valid",
+          "value": "\"crm\".\"auth_recovery_challenges\".\"state\" IN ('pending', 'verified', 'consumed', 'expired', 'quarantined')"
+        },
+        "auth_recovery_challenges_state_hash_not_blank": {
+          "name": "auth_recovery_challenges_state_hash_not_blank",
+          "value": "btrim(\"crm\".\"auth_recovery_challenges\".\"state_verifier_hash\") <> ''"
+        },
+        "auth_recovery_challenges_verifier_not_blank": {
+          "name": "auth_recovery_challenges_verifier_not_blank",
+          "value": "btrim(\"crm\".\"auth_recovery_challenges\".\"code_verifier_ciphertext\") <> ''"
+        },
+        "auth_recovery_challenges_grant_state_valid": {
+          "name": "auth_recovery_challenges_grant_state_valid",
+          "value": "(\"crm\".\"auth_recovery_challenges\".\"state\" = 'verified' AND \"crm\".\"auth_recovery_challenges\".\"recovery_grant_hash\" IS NOT NULL AND \"crm\".\"auth_recovery_challenges\".\"verified_at\" IS NOT NULL) OR (\"crm\".\"auth_recovery_challenges\".\"state\" <> 'verified' AND \"crm\".\"auth_recovery_challenges\".\"recovery_grant_hash\" IS NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.clinic_security_states": {
+      "name": "clinic_security_states",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "security_initialized_at": {
+          "name": "security_initialized_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "authorization_revision": {
+          "name": "authorization_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "clinic_security_states_one_current_unique": {
+          "name": "clinic_security_states_one_current_unique",
+          "columns": [
+            {
+              "expression": "(true)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "clinic_security_states_revision_positive": {
+          "name": "clinic_security_states_revision_positive",
+          "value": "\"crm\".\"clinic_security_states\".\"authorization_revision\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.clinic_settings": {
+      "name": "clinic_settings",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "clinic_name": {
+          "name": "clinic_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "clinic_settings_one_active_unique": {
+          "name": "clinic_settings_one_active_unique",
+          "columns": [
+            {
+              "expression": "(true)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"crm\".\"clinic_settings\".\"archived_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "clinic_settings_clinic_name_not_blank": {
+          "name": "clinic_settings_clinic_name_not_blank",
+          "value": "btrim(\"crm\".\"clinic_settings\".\"clinic_name\") <> ''"
+        },
+        "clinic_settings_timezone_not_blank": {
+          "name": "clinic_settings_timezone_not_blank",
+          "value": "btrim(\"crm\".\"clinic_settings\".\"timezone\") <> ''"
+        },
+        "clinic_settings_version_positive": {
+          "name": "clinic_settings_version_positive",
+          "value": "\"crm\".\"clinic_settings\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.crm_sessions": {
+      "name": "crm_sessions",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "employee_id": {
+          "name": "employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employment_epoch_id": {
+          "name": "employment_epoch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth_binding_id": {
+          "name": "auth_binding_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_session_id": {
+          "name": "provider_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "family_id": {
+          "name": "family_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issued_session_epoch": {
+          "name": "issued_session_epoch",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issued_credential_epoch": {
+          "name": "issued_credential_epoch",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "access_token_hash": {
+          "name": "access_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "refresh_token_hash": {
+          "name": "refresh_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_refresh_token_ciphertext": {
+          "name": "provider_refresh_token_ciphertext",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "refresh_generation": {
+          "name": "refresh_generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "last_interactive_at": {
+          "name": "last_interactive_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idle_expires_at": {
+          "name": "idle_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "absolute_expires_at": {
+          "name": "absolute_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoke_reason": {
+          "name": "revoke_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_reconciled_at": {
+          "name": "provider_reconciled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "crm_sessions_employee_active_idx": {
+          "name": "crm_sessions_employee_active_idx",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"crm_sessions\".\"status\" = 'active'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "crm_sessions_family_active_idx": {
+          "name": "crm_sessions_family_active_idx",
+          "columns": [
+            {
+              "expression": "family_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"crm_sessions\".\"status\" = 'active'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "crm_sessions_employee_id_employees_id_fk": {
+          "name": "crm_sessions_employee_id_employees_id_fk",
+          "tableFrom": "crm_sessions",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "crm_sessions_employment_epoch_id_employment_epochs_id_fk": {
+          "name": "crm_sessions_employment_epoch_id_employment_epochs_id_fk",
+          "tableFrom": "crm_sessions",
+          "tableTo": "employment_epochs",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employment_epoch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "crm_sessions_auth_binding_id_auth_bindings_id_fk": {
+          "name": "crm_sessions_auth_binding_id_auth_bindings_id_fk",
+          "tableFrom": "crm_sessions",
+          "tableTo": "auth_bindings",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "auth_binding_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "crm_sessions_provider_session_unique": {
+          "name": "crm_sessions_provider_session_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "provider_session_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "crm_sessions_status_valid": {
+          "name": "crm_sessions_status_valid",
+          "value": "\"crm\".\"crm_sessions\".\"status\" IN ('active', 'revoked', 'expired')"
+        },
+        "crm_sessions_epochs_positive": {
+          "name": "crm_sessions_epochs_positive",
+          "value": "\"crm\".\"crm_sessions\".\"issued_session_epoch\" > 0 AND \"crm\".\"crm_sessions\".\"issued_credential_epoch\" > 0 AND \"crm\".\"crm_sessions\".\"refresh_generation\" > 0 AND \"crm\".\"crm_sessions\".\"revision\" > 0"
+        },
+        "crm_sessions_deadlines_valid": {
+          "name": "crm_sessions_deadlines_valid",
+          "value": "\"crm\".\"crm_sessions\".\"idle_expires_at\" <= \"crm\".\"crm_sessions\".\"absolute_expires_at\""
+        },
+        "crm_sessions_access_hash_not_blank": {
+          "name": "crm_sessions_access_hash_not_blank",
+          "value": "btrim(\"crm\".\"crm_sessions\".\"access_token_hash\") <> ''"
+        },
+        "crm_sessions_refresh_hash_not_blank": {
+          "name": "crm_sessions_refresh_hash_not_blank",
+          "value": "btrim(\"crm\".\"crm_sessions\".\"refresh_token_hash\") <> ''"
+        },
+        "crm_sessions_provider_refresh_ciphertext_not_blank": {
+          "name": "crm_sessions_provider_refresh_ciphertext_not_blank",
+          "value": "btrim(\"crm\".\"crm_sessions\".\"provider_refresh_token_ciphertext\") <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.employee_permission_overrides": {
+      "name": "employee_permission_overrides",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "employee_id": {
+          "name": "employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employment_epoch_id": {
+          "name": "employment_epoch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "permission_code": {
+          "name": "permission_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "granted_by_employee_id": {
+          "name": "granted_by_employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "employee_permission_overrides_active_unique": {
+          "name": "employee_permission_overrides_active_unique",
+          "columns": [
+            {
+              "expression": "employment_epoch_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "permission_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"crm\".\"employee_permission_overrides\".\"revoked_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "employee_permission_overrides_employee_id_employees_id_fk": {
+          "name": "employee_permission_overrides_employee_id_employees_id_fk",
+          "tableFrom": "employee_permission_overrides",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "employee_permission_overrides_employment_epoch_id_employment_epochs_id_fk": {
+          "name": "employee_permission_overrides_employment_epoch_id_employment_epochs_id_fk",
+          "tableFrom": "employee_permission_overrides",
+          "tableTo": "employment_epochs",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employment_epoch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "employee_permission_overrides_permission_code_permission_catalog_code_fk": {
+          "name": "employee_permission_overrides_permission_code_permission_catalog_code_fk",
+          "tableFrom": "employee_permission_overrides",
+          "tableTo": "permission_catalog",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "permission_code"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "employee_permission_overrides_granted_by_employee_id_employees_id_fk": {
+          "name": "employee_permission_overrides_granted_by_employee_id_employees_id_fk",
+          "tableFrom": "employee_permission_overrides",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "granted_by_employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "employee_permission_overrides_mode_valid": {
+          "name": "employee_permission_overrides_mode_valid",
+          "value": "\"crm\".\"employee_permission_overrides\".\"mode\" IN ('replace', 'deny')"
+        },
+        "employee_permission_overrides_reason_not_blank": {
+          "name": "employee_permission_overrides_reason_not_blank",
+          "value": "btrim(\"crm\".\"employee_permission_overrides\".\"reason\") <> ''"
+        },
+        "employee_permission_overrides_scope_valid": {
+          "name": "employee_permission_overrides_scope_valid",
+          "value": "(\"crm\".\"employee_permission_overrides\".\"mode\" = 'deny' AND \"crm\".\"employee_permission_overrides\".\"scope\" IS NULL) OR (\"crm\".\"employee_permission_overrides\".\"mode\" = 'replace' AND \"crm\".\"employee_permission_overrides\".\"scope\" IS NOT NULL)"
+        },
+        "employee_permission_overrides_version_positive": {
+          "name": "employee_permission_overrides_version_positive",
+          "value": "\"crm\".\"employee_permission_overrides\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.employee_security_states": {
+      "name": "employee_security_states",
+      "schema": "crm",
+      "columns": {
+        "employee_id": {
+          "name": "employee_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "employment_epoch_id": {
+          "name": "employment_epoch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "access_state": {
+          "name": "access_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'suspended'"
+        },
+        "credential_state": {
+          "name": "credential_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unready'"
+        },
+        "login_failure_count": {
+          "name": "login_failure_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "login_locked_until": {
+          "name": "login_locked_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "session_epoch": {
+          "name": "session_epoch",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "credential_epoch": {
+          "name": "credential_epoch",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "authorization_revision": {
+          "name": "authorization_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "provider_reconciled_at": {
+          "name": "provider_reconciled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "employee_security_states_epoch_unique": {
+          "name": "employee_security_states_epoch_unique",
+          "columns": [
+            {
+              "expression": "employment_epoch_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"crm\".\"employee_security_states\".\"employment_epoch_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "employee_security_states_employee_id_employees_id_fk": {
+          "name": "employee_security_states_employee_id_employees_id_fk",
+          "tableFrom": "employee_security_states",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "employee_security_states_employment_epoch_id_employment_epochs_id_fk": {
+          "name": "employee_security_states_employment_epoch_id_employment_epochs_id_fk",
+          "tableFrom": "employee_security_states",
+          "tableTo": "employment_epochs",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employment_epoch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "employee_security_states_access_valid": {
+          "name": "employee_security_states_access_valid",
+          "value": "\"crm\".\"employee_security_states\".\"access_state\" IN ('active', 'suspended', 'security_quarantined', 'terminated')"
+        },
+        "employee_security_states_credential_valid": {
+          "name": "employee_security_states_credential_valid",
+          "value": "\"crm\".\"employee_security_states\".\"credential_state\" IN ('unready', 'temporary_password', 'ready', 'password_change_required', 'changing', 'reconciliation_required', 'disabled')"
+        },
+        "employee_security_states_failure_count_valid": {
+          "name": "employee_security_states_failure_count_valid",
+          "value": "\"crm\".\"employee_security_states\".\"login_failure_count\" BETWEEN 0 AND 5"
+        },
+        "employee_security_states_session_epoch_positive": {
+          "name": "employee_security_states_session_epoch_positive",
+          "value": "\"crm\".\"employee_security_states\".\"session_epoch\" > 0"
+        },
+        "employee_security_states_credential_epoch_positive": {
+          "name": "employee_security_states_credential_epoch_positive",
+          "value": "\"crm\".\"employee_security_states\".\"credential_epoch\" > 0"
+        },
+        "employee_security_states_authorization_revision_positive": {
+          "name": "employee_security_states_authorization_revision_positive",
+          "value": "\"crm\".\"employee_security_states\".\"authorization_revision\" > 0"
+        },
+        "employee_security_states_version_positive": {
+          "name": "employee_security_states_version_positive",
+          "value": "\"crm\".\"employee_security_states\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.employees": {
+      "name": "employees",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "auth_subject_id": {
+          "name": "auth_subject_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contact_email": {
+          "name": "contact_email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "current_employment_epoch_id": {
+          "name": "current_employment_epoch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "employees_email_unique": {
+          "name": "employees_email_unique",
+          "columns": [
+            {
+              "expression": "lower(\"email\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "employees_current_employment_epoch_id_employment_epochs_id_fk": {
+          "name": "employees_current_employment_epoch_id_employment_epochs_id_fk",
+          "tableFrom": "employees",
+          "tableTo": "employment_epochs",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "current_employment_epoch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "employees_auth_subject_unique": {
+          "name": "employees_auth_subject_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "auth_subject_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "employees_full_name_not_blank": {
+          "name": "employees_full_name_not_blank",
+          "value": "btrim(\"crm\".\"employees\".\"full_name\") <> ''"
+        },
+        "employees_email_not_blank": {
+          "name": "employees_email_not_blank",
+          "value": "btrim(\"crm\".\"employees\".\"email\") <> ''"
+        },
+        "employees_version_positive": {
+          "name": "employees_version_positive",
+          "value": "\"crm\".\"employees\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.employment_epochs": {
+      "name": "employment_epochs",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "employee_id": {
+          "name": "employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sequence": {
+          "name": "sequence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ended_at": {
+          "name": "ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "employment_epochs_one_current_per_employee_unique": {
+          "name": "employment_epochs_one_current_per_employee_unique",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"crm\".\"employment_epochs\".\"state\" IN ('reserved', 'provider_creating', 'provider_confirmed', 'activating', 'active', 'offboarding')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "employment_epochs_employee_state_idx": {
+          "name": "employment_epochs_employee_state_idx",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "employment_epochs_employee_id_employees_id_fk": {
+          "name": "employment_epochs_employee_id_employees_id_fk",
+          "tableFrom": "employment_epochs",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "employment_epochs_employee_sequence_unique": {
+          "name": "employment_epochs_employee_sequence_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "employee_id",
+            "sequence"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "employment_epochs_state_valid": {
+          "name": "employment_epochs_state_valid",
+          "value": "\"crm\".\"employment_epochs\".\"state\" IN ('reserved', 'provider_creating', 'provider_confirmed', 'activating', 'active', 'offboarding', 'terminated', 'failed', 'cancelled', 'quarantined')"
+        },
+        "employment_epochs_sequence_positive": {
+          "name": "employment_epochs_sequence_positive",
+          "value": "\"crm\".\"employment_epochs\".\"sequence\" > 0"
+        },
+        "employment_epochs_version_positive": {
+          "name": "employment_epochs_version_positive",
+          "value": "\"crm\".\"employment_epochs\".\"version\" > 0"
+        },
+        "employment_epochs_interval_valid": {
+          "name": "employment_epochs_interval_valid",
+          "value": "\"crm\".\"employment_epochs\".\"ended_at\" IS NULL OR \"crm\".\"employment_epochs\".\"started_at\" IS NULL OR \"crm\".\"employment_epochs\".\"ended_at\" >= \"crm\".\"employment_epochs\".\"started_at\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.idempotency_completion_capabilities": {
+      "name": "idempotency_completion_capabilities",
+      "schema": "crm",
+      "columns": {
+        "idempotency_key_id": {
+          "name": "idempotency_key_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "capability": {
+          "name": "capability",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "idempotency_completion_capabilities_idempotency_key_id_idempotency_keys_id_fk": {
+          "name": "idempotency_completion_capabilities_idempotency_key_id_idempotency_keys_id_fk",
+          "tableFrom": "idempotency_completion_capabilities",
+          "tableTo": "idempotency_keys",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "idempotency_key_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "idempotency_completion_capabilities_format": {
+          "name": "idempotency_completion_capabilities_format",
+          "value": "\"crm\".\"idempotency_completion_capabilities\".\"capability\" ~ '^[0-9a-f]{64}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.idempotency_keys": {
+      "name": "idempotency_keys",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "operation": {
+          "name": "operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_fingerprint": {
+          "name": "request_fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "response_status": {
+          "name": "response_status",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "response": {
+          "name": "response",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claim_expires_at": {
+          "name": "claim_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "idempotency_keys_scope_operation_key_unique": {
+          "name": "idempotency_keys_scope_operation_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "scope",
+            "operation",
+            "key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "idempotency_keys_scope_not_blank": {
+          "name": "idempotency_keys_scope_not_blank",
+          "value": "btrim(\"crm\".\"idempotency_keys\".\"scope\") <> ''"
+        },
+        "idempotency_keys_operation_not_blank": {
+          "name": "idempotency_keys_operation_not_blank",
+          "value": "btrim(\"crm\".\"idempotency_keys\".\"operation\") <> ''"
+        },
+        "idempotency_keys_key_not_blank": {
+          "name": "idempotency_keys_key_not_blank",
+          "value": "btrim(\"crm\".\"idempotency_keys\".\"key\") <> ''"
+        },
+        "idempotency_keys_fingerprint_not_blank": {
+          "name": "idempotency_keys_fingerprint_not_blank",
+          "value": "btrim(\"crm\".\"idempotency_keys\".\"request_fingerprint\") <> ''"
+        },
+        "idempotency_keys_state_valid": {
+          "name": "idempotency_keys_state_valid",
+          "value": "\"crm\".\"idempotency_keys\".\"state\" IN ('pending', 'completed')"
+        },
+        "idempotency_keys_response_status_valid": {
+          "name": "idempotency_keys_response_status_valid",
+          "value": "\"crm\".\"idempotency_keys\".\"response_status\" IS NULL OR \"crm\".\"idempotency_keys\".\"response_status\" BETWEEN 100 AND 599"
+        },
+        "idempotency_keys_completed_result": {
+          "name": "idempotency_keys_completed_result",
+          "value": "(\"crm\".\"idempotency_keys\".\"state\" = 'pending' AND \"crm\".\"idempotency_keys\".\"response_status\" IS NULL AND \"crm\".\"idempotency_keys\".\"response\" IS NULL AND \"crm\".\"idempotency_keys\".\"completed_at\" IS NULL AND \"crm\".\"idempotency_keys\".\"claim_expires_at\" IS NOT NULL) OR (\"crm\".\"idempotency_keys\".\"state\" = 'completed' AND \"crm\".\"idempotency_keys\".\"response_status\" IS NOT NULL AND \"crm\".\"idempotency_keys\".\"response\" IS NOT NULL AND \"crm\".\"idempotency_keys\".\"completed_at\" IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.leads": {
+      "name": "leads",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assigned_employee_id": {
+          "name": "assigned_employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "converted_patient_id": {
+          "name": "converted_patient_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "leads_assigned_employee_idx": {
+          "name": "leads_assigned_employee_idx",
+          "columns": [
+            {
+              "expression": "assigned_employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"leads\".\"assigned_employee_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "leads_converted_patient_idx": {
+          "name": "leads_converted_patient_idx",
+          "columns": [
+            {
+              "expression": "converted_patient_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"leads\".\"converted_patient_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "leads_status_created_idx": {
+          "name": "leads_status_created_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"leads\".\"archived_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "leads_assigned_employee_id_employees_id_fk": {
+          "name": "leads_assigned_employee_id_employees_id_fk",
+          "tableFrom": "leads",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "assigned_employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "leads_converted_patient_id_patients_id_fk": {
+          "name": "leads_converted_patient_id_patients_id_fk",
+          "tableFrom": "leads",
+          "tableTo": "patients",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "converted_patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "leads_full_name_not_blank": {
+          "name": "leads_full_name_not_blank",
+          "value": "btrim(\"crm\".\"leads\".\"full_name\") <> ''"
+        },
+        "leads_phone_not_blank": {
+          "name": "leads_phone_not_blank",
+          "value": "btrim(\"crm\".\"leads\".\"phone\") <> ''"
+        },
+        "leads_status_not_blank": {
+          "name": "leads_status_not_blank",
+          "value": "btrim(\"crm\".\"leads\".\"status\") <> ''"
+        },
+        "leads_version_positive": {
+          "name": "leads_version_positive",
+          "value": "\"crm\".\"leads\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.login_claims": {
+      "name": "login_claims",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "canonical_login": {
+          "name": "canonical_login",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employment_epoch_id": {
+          "name": "employment_epoch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "released_at": {
+          "name": "released_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "login_claims_employment_epoch_id_employment_epochs_id_fk": {
+          "name": "login_claims_employment_epoch_id_employment_epochs_id_fk",
+          "tableFrom": "login_claims",
+          "tableTo": "employment_epochs",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employment_epoch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "login_claims_canonical_login_unique": {
+          "name": "login_claims_canonical_login_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "canonical_login"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "login_claims_canonical_login_not_blank": {
+          "name": "login_claims_canonical_login_not_blank",
+          "value": "btrim(\"crm\".\"login_claims\".\"canonical_login\") <> ''"
+        },
+        "login_claims_state_valid": {
+          "name": "login_claims_state_valid",
+          "value": "\"crm\".\"login_claims\".\"state\" IN ('reserved', 'active', 'tombstoned', 'cancelled')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.medical_cases": {
+      "name": "medical_cases",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "responsible_employee_id": {
+          "name": "responsible_employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "opened_at": {
+          "name": "opened_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "medical_cases_patient_idx": {
+          "name": "medical_cases_patient_idx",
+          "columns": [
+            {
+              "expression": "patient_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"medical_cases\".\"archived_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "medical_cases_responsible_employee_idx": {
+          "name": "medical_cases_responsible_employee_idx",
+          "columns": [
+            {
+              "expression": "responsible_employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"medical_cases\".\"responsible_employee_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "medical_cases_patient_id_patients_id_fk": {
+          "name": "medical_cases_patient_id_patients_id_fk",
+          "tableFrom": "medical_cases",
+          "tableTo": "patients",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "medical_cases_responsible_employee_id_employees_id_fk": {
+          "name": "medical_cases_responsible_employee_id_employees_id_fk",
+          "tableFrom": "medical_cases",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "responsible_employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "medical_cases_id_patient_unique": {
+          "name": "medical_cases_id_patient_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "patient_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "medical_cases_status_not_blank": {
+          "name": "medical_cases_status_not_blank",
+          "value": "btrim(\"crm\".\"medical_cases\".\"status\") <> ''"
+        },
+        "medical_cases_closed_after_opened": {
+          "name": "medical_cases_closed_after_opened",
+          "value": "\"crm\".\"medical_cases\".\"closed_at\" IS NULL OR \"crm\".\"medical_cases\".\"closed_at\" >= \"crm\".\"medical_cases\".\"opened_at\""
+        },
+        "medical_cases_version_positive": {
+          "name": "medical_cases_version_positive",
+          "value": "\"crm\".\"medical_cases\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.patients": {
+      "name": "patients",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "family_name": {
+          "name": "family_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "given_name": {
+          "name": "given_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "middle_name": {
+          "name": "middle_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "date_of_birth": {
+          "name": "date_of_birth",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "patients_name_active_idx": {
+          "name": "patients_name_active_idx",
+          "columns": [
+            {
+              "expression": "family_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "given_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"patients\".\"archived_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "patients_phone_active_idx": {
+          "name": "patients_phone_active_idx",
+          "columns": [
+            {
+              "expression": "phone",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"patients\".\"archived_at\" IS NULL AND \"crm\".\"patients\".\"phone\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "patients_family_name_not_blank": {
+          "name": "patients_family_name_not_blank",
+          "value": "btrim(\"crm\".\"patients\".\"family_name\") <> ''"
+        },
+        "patients_given_name_not_blank": {
+          "name": "patients_given_name_not_blank",
+          "value": "btrim(\"crm\".\"patients\".\"given_name\") <> ''"
+        },
+        "patients_version_positive": {
+          "name": "patients_version_positive",
+          "value": "\"crm\".\"patients\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.permission_catalog": {
+      "name": "permission_catalog",
+      "schema": "crm",
+      "columns": {
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "resource_family": {
+          "name": "resource_family",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_sensitive": {
+          "name": "is_sensitive",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "is_governance": {
+          "name": "is_governance",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "permission_catalog_code_not_blank": {
+          "name": "permission_catalog_code_not_blank",
+          "value": "btrim(\"crm\".\"permission_catalog\".\"code\") <> ''"
+        },
+        "permission_catalog_family_not_blank": {
+          "name": "permission_catalog_family_not_blank",
+          "value": "btrim(\"crm\".\"permission_catalog\".\"resource_family\") <> ''"
+        },
+        "permission_catalog_sensitive_bool": {
+          "name": "permission_catalog_sensitive_bool",
+          "value": "\"crm\".\"permission_catalog\".\"is_sensitive\" IN (0, 1)"
+        },
+        "permission_catalog_governance_bool": {
+          "name": "permission_catalog_governance_bool",
+          "value": "\"crm\".\"permission_catalog\".\"is_governance\" IN (0, 1)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.role_assignments": {
+      "name": "role_assignments",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "employee_id": {
+          "name": "employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employment_epoch_id": {
+          "name": "employment_epoch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role_id": {
+          "name": "role_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assigned_by_employee_id": {
+          "name": "assigned_by_employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assigned_at": {
+          "name": "assigned_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "role_assignments_active_epoch_role_unique": {
+          "name": "role_assignments_active_epoch_role_unique",
+          "columns": [
+            {
+              "expression": "employment_epoch_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "role_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"crm\".\"role_assignments\".\"revoked_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "role_assignments_employee_active_idx": {
+          "name": "role_assignments_employee_active_idx",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"role_assignments\".\"revoked_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "role_assignments_employee_id_employees_id_fk": {
+          "name": "role_assignments_employee_id_employees_id_fk",
+          "tableFrom": "role_assignments",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "role_assignments_employment_epoch_id_employment_epochs_id_fk": {
+          "name": "role_assignments_employment_epoch_id_employment_epochs_id_fk",
+          "tableFrom": "role_assignments",
+          "tableTo": "employment_epochs",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "employment_epoch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "role_assignments_role_id_roles_id_fk": {
+          "name": "role_assignments_role_id_roles_id_fk",
+          "tableFrom": "role_assignments",
+          "tableTo": "roles",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "role_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "role_assignments_assigned_by_employee_id_employees_id_fk": {
+          "name": "role_assignments_assigned_by_employee_id_employees_id_fk",
+          "tableFrom": "role_assignments",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "assigned_by_employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "role_assignments_reason_not_blank": {
+          "name": "role_assignments_reason_not_blank",
+          "value": "btrim(\"crm\".\"role_assignments\".\"reason\") <> ''"
+        },
+        "role_assignments_version_positive": {
+          "name": "role_assignments_version_positive",
+          "value": "\"crm\".\"role_assignments\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.role_grants": {
+      "name": "role_grants",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "role_revision_id": {
+          "name": "role_revision_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "permission_code": {
+          "name": "permission_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "role_grants_role_revision_id_role_revisions_id_fk": {
+          "name": "role_grants_role_revision_id_role_revisions_id_fk",
+          "tableFrom": "role_grants",
+          "tableTo": "role_revisions",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "role_revision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "role_grants_permission_code_permission_catalog_code_fk": {
+          "name": "role_grants_permission_code_permission_catalog_code_fk",
+          "tableFrom": "role_grants",
+          "tableTo": "permission_catalog",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "permission_code"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "role_grants_revision_permission_unique": {
+          "name": "role_grants_revision_permission_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "role_revision_id",
+            "permission_code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "crm.role_revisions": {
+      "name": "role_revisions",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "role_id": {
+          "name": "role_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "published_by_employee_id": {
+          "name": "published_by_employee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "capability_hash": {
+          "name": "capability_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "role_revisions_role_id_roles_id_fk": {
+          "name": "role_revisions_role_id_roles_id_fk",
+          "tableFrom": "role_revisions",
+          "tableTo": "roles",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "role_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "role_revisions_published_by_employee_id_employees_id_fk": {
+          "name": "role_revisions_published_by_employee_id_employees_id_fk",
+          "tableFrom": "role_revisions",
+          "tableTo": "employees",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "published_by_employee_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "role_revisions_role_revision_unique": {
+          "name": "role_revisions_role_revision_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "role_id",
+            "revision"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "role_revisions_revision_positive": {
+          "name": "role_revisions_revision_positive",
+          "value": "\"crm\".\"role_revisions\".\"revision\" > 0"
+        },
+        "role_revisions_reason_not_blank": {
+          "name": "role_revisions_reason_not_blank",
+          "value": "btrim(\"crm\".\"role_revisions\".\"reason\") <> ''"
+        },
+        "role_revisions_capability_hash_not_blank": {
+          "name": "role_revisions_capability_hash_not_blank",
+          "value": "btrim(\"crm\".\"role_revisions\".\"capability_hash\") <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.roles": {
+      "name": "roles",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "system_kind": {
+          "name": "system_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'custom'"
+        },
+        "current_revision_id": {
+          "name": "current_revision_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "admin_assignable": {
+          "name": "admin_assignable",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "authorization_revision": {
+          "name": "authorization_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "roles_current_revision_id_role_revisions_id_fk": {
+          "name": "roles_current_revision_id_role_revisions_id_fk",
+          "tableFrom": "roles",
+          "tableTo": "role_revisions",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "current_revision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "roles_code_unique": {
+          "name": "roles_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "roles_code_not_blank": {
+          "name": "roles_code_not_blank",
+          "value": "btrim(\"crm\".\"roles\".\"code\") <> ''"
+        },
+        "roles_system_kind_valid": {
+          "name": "roles_system_kind_valid",
+          "value": "\"crm\".\"roles\".\"system_kind\" IN ('custom', 'leader', 'administrator', 'doctor', 'rehabilitologist', 'massage_therapist', 'physiotherapist')"
+        },
+        "roles_admin_assignable_bool": {
+          "name": "roles_admin_assignable_bool",
+          "value": "\"crm\".\"roles\".\"admin_assignable\" IN (0, 1)"
+        },
+        "roles_authorization_revision_positive": {
+          "name": "roles_authorization_revision_positive",
+          "value": "\"crm\".\"roles\".\"authorization_revision\" > 0"
+        },
+        "roles_version_positive": {
+          "name": "roles_version_positive",
+          "value": "\"crm\".\"roles\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.rooms": {
+      "name": "rooms",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "capacity": {
+          "name": "capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "rooms_code_unique": {
+          "name": "rooms_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "rooms_code_not_blank": {
+          "name": "rooms_code_not_blank",
+          "value": "btrim(\"crm\".\"rooms\".\"code\") <> ''"
+        },
+        "rooms_name_not_blank": {
+          "name": "rooms_name_not_blank",
+          "value": "btrim(\"crm\".\"rooms\".\"name\") <> ''"
+        },
+        "rooms_capacity_positive": {
+          "name": "rooms_capacity_positive",
+          "value": "\"crm\".\"rooms\".\"capacity\" > 0"
+        },
+        "rooms_version_positive": {
+          "name": "rooms_version_positive",
+          "value": "\"crm\".\"rooms\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.security_outbox": {
+      "name": "security_outbox",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "operation": {
+          "name": "operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aggregate_type": {
+          "name": "aggregate_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aggregate_id": {
+          "name": "aggregate_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expected_epoch": {
+          "name": "expected_epoch",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "security_outbox_operation_aggregate_unique": {
+          "name": "security_outbox_operation_aggregate_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "operation",
+            "aggregate_type",
+            "aggregate_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "security_outbox_operation_not_blank": {
+          "name": "security_outbox_operation_not_blank",
+          "value": "btrim(\"crm\".\"security_outbox\".\"operation\") <> ''"
+        },
+        "security_outbox_aggregate_type_not_blank": {
+          "name": "security_outbox_aggregate_type_not_blank",
+          "value": "btrim(\"crm\".\"security_outbox\".\"aggregate_type\") <> ''"
+        },
+        "security_outbox_state_valid": {
+          "name": "security_outbox_state_valid",
+          "value": "\"crm\".\"security_outbox\".\"state\" IN ('pending', 'processing', 'completed', 'failed', 'quarantined')"
+        },
+        "security_outbox_attempts_nonnegative": {
+          "name": "security_outbox_attempts_nonnegative",
+          "value": "\"crm\".\"security_outbox\".\"attempts\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "crm.services": {
+      "name": "services",
+      "schema": "crm",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delivery_mode": {
+          "name": "delivery_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "default_duration_minutes": {
+          "name": "default_duration_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "default_price": {
+          "name": "default_price",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "default_capacity": {
+          "name": "default_capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "services_code_unique": {
+          "name": "services_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "services_code_not_blank": {
+          "name": "services_code_not_blank",
+          "value": "btrim(\"crm\".\"services\".\"code\") <> ''"
+        },
+        "services_name_not_blank": {
+          "name": "services_name_not_blank",
+          "value": "btrim(\"crm\".\"services\".\"name\") <> ''"
+        },
+        "services_delivery_mode_valid": {
+          "name": "services_delivery_mode_valid",
+          "value": "\"crm\".\"services\".\"delivery_mode\" IN ('individual', 'group')"
+        },
+        "services_duration_positive": {
+          "name": "services_duration_positive",
+          "value": "\"crm\".\"services\".\"default_duration_minutes\" > 0"
+        },
+        "services_price_nonnegative": {
+          "name": "services_price_nonnegative",
+          "value": "\"crm\".\"services\".\"default_price\" >= 0"
+        },
+        "services_capacity_positive": {
+          "name": "services_capacity_positive",
+          "value": "\"crm\".\"services\".\"default_capacity\" > 0"
+        },
+        "services_version_positive": {
+          "name": "services_version_positive",
+          "value": "\"crm\".\"services\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "crm": "crm"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

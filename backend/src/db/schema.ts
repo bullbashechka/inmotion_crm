@@ -42,9 +42,12 @@ export const clinicSettings = crm.table("clinic_settings", {
 
 export const employees = crm.table("employees", {
   id: uuid("id").primaryKey(),
+  /** Legacy current binding retained during task-004 expand/contract migration. */
   authSubjectId: uuid("auth_subject_id"),
   fullName: text("full_name").notNull(),
   email: text("email").notNull(),
+  contactEmail: text("contact_email"),
+  currentEmploymentEpochId: uuid("current_employment_epoch_id").references(() => employmentEpochs.id, { onDelete: "restrict" }),
   ...lifecycleColumns,
 }, (table) => [
   unique("employees_auth_subject_unique").on(table.authSubjectId),
@@ -52,6 +55,295 @@ export const employees = crm.table("employees", {
   check("employees_full_name_not_blank", nonBlank(table.fullName)),
   check("employees_email_not_blank", nonBlank(table.email)),
   check("employees_version_positive", positiveVersion(table.version)),
+]);
+
+export const clinicSecurityStates = crm.table("clinic_security_states", {
+  id: uuid("id").primaryKey(),
+  securityInitializedAt: timestamp("security_initialized_at", { withTimezone: true, mode: "date" }),
+  authorizationRevision: integer("authorization_revision").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("clinic_security_states_one_current_unique").on(sql`(true)`),
+  check("clinic_security_states_revision_positive", positiveVersion(table.authorizationRevision)),
+]);
+
+export const employmentEpochs = crm.table("employment_epochs", {
+  id: uuid("id").primaryKey(),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id, { onDelete: "restrict" }),
+  sequence: integer("sequence").notNull(),
+  state: text("state").notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+  endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  version: integer("version").notNull().default(1),
+}, (table) => [
+  unique("employment_epochs_employee_sequence_unique").on(table.employeeId, table.sequence),
+  uniqueIndex("employment_epochs_one_current_per_employee_unique")
+    .on(table.employeeId)
+    .where(sql`${table.state} IN ('reserved', 'provider_creating', 'provider_confirmed', 'activating', 'active', 'offboarding')`),
+  index("employment_epochs_employee_state_idx").on(table.employeeId, table.state),
+  check("employment_epochs_state_valid", sql`${table.state} IN ('reserved', 'provider_creating', 'provider_confirmed', 'activating', 'active', 'offboarding', 'terminated', 'failed', 'cancelled', 'quarantined')`),
+  check("employment_epochs_sequence_positive", sql`${table.sequence} > 0`),
+  check("employment_epochs_version_positive", positiveVersion(table.version)),
+  check("employment_epochs_interval_valid", sql`${table.endedAt} IS NULL OR ${table.startedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}`),
+]);
+
+export const employeeSecurityStates = crm.table("employee_security_states", {
+  employeeId: uuid("employee_id").primaryKey().references(() => employees.id, { onDelete: "restrict" }),
+  employmentEpochId: uuid("employment_epoch_id").references(() => employmentEpochs.id, { onDelete: "restrict" }),
+  accessState: text("access_state").notNull().default("suspended"),
+  credentialState: text("credential_state").notNull().default("unready"),
+  loginFailureCount: integer("login_failure_count").notNull().default(0),
+  loginLockedUntil: timestamp("login_locked_until", { withTimezone: true, mode: "date" }),
+  sessionEpoch: integer("session_epoch").notNull().default(1),
+  credentialEpoch: integer("credential_epoch").notNull().default(1),
+  authorizationRevision: integer("authorization_revision").notNull().default(1),
+  providerReconciledAt: timestamp("provider_reconciled_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  version: integer("version").notNull().default(1),
+}, (table) => [
+  uniqueIndex("employee_security_states_epoch_unique")
+    .on(table.employmentEpochId)
+    .where(sql`${table.employmentEpochId} IS NOT NULL`),
+  check("employee_security_states_access_valid", sql`${table.accessState} IN ('active', 'suspended', 'security_quarantined', 'terminated')`),
+  check("employee_security_states_credential_valid", sql`${table.credentialState} IN ('unready', 'temporary_password', 'ready', 'password_change_required', 'changing', 'reconciliation_required', 'disabled')`),
+  check("employee_security_states_failure_count_valid", sql`${table.loginFailureCount} BETWEEN 0 AND 5`),
+  check("employee_security_states_session_epoch_positive", sql`${table.sessionEpoch} > 0`),
+  check("employee_security_states_credential_epoch_positive", sql`${table.credentialEpoch} > 0`),
+  check("employee_security_states_authorization_revision_positive", positiveVersion(table.authorizationRevision)),
+  check("employee_security_states_version_positive", positiveVersion(table.version)),
+]);
+
+export const loginClaims = crm.table("login_claims", {
+  id: uuid("id").primaryKey(),
+  canonicalLogin: text("canonical_login").notNull(),
+  employmentEpochId: uuid("employment_epoch_id").references(() => employmentEpochs.id, { onDelete: "restrict" }),
+  state: text("state").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  releasedAt: timestamp("released_at", { withTimezone: true, mode: "date" }),
+}, (table) => [
+  unique("login_claims_canonical_login_unique").on(table.canonicalLogin),
+  check("login_claims_canonical_login_not_blank", nonBlank(table.canonicalLogin)),
+  check("login_claims_state_valid", sql`${table.state} IN ('reserved', 'active', 'tombstoned', 'cancelled')`),
+]);
+
+export const authBindings = crm.table("auth_bindings", {
+  id: uuid("id").primaryKey(),
+  employmentEpochId: uuid("employment_epoch_id").notNull().references(() => employmentEpochs.id, { onDelete: "restrict" }),
+  providerNamespace: text("provider_namespace").notNull(),
+  providerSubjectId: uuid("provider_subject_id").notNull(),
+  providerMarker: text("provider_marker").notNull(),
+  state: text("state").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  confirmedAt: timestamp("confirmed_at", { withTimezone: true, mode: "date" }),
+  endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+}, (table) => [
+  unique("auth_bindings_provider_subject_unique").on(table.providerNamespace, table.providerSubjectId),
+  uniqueIndex("auth_bindings_one_current_epoch_unique")
+    .on(table.employmentEpochId)
+    .where(sql`${table.state} IN ('reserved', 'confirmed', 'active')`),
+  check("auth_bindings_namespace_not_blank", nonBlank(table.providerNamespace)),
+  check("auth_bindings_marker_not_blank", nonBlank(table.providerMarker)),
+  check("auth_bindings_state_valid", sql`${table.state} IN ('reserved', 'confirmed', 'active', 'ended', 'quarantined')`),
+]);
+
+export const permissionCatalog = crm.table("permission_catalog", {
+  code: text("code").primaryKey(),
+  resourceFamily: text("resource_family").notNull(),
+  isSensitive: integer("is_sensitive").notNull().default(0),
+  isGovernance: integer("is_governance").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  check("permission_catalog_code_not_blank", nonBlank(table.code)),
+  check("permission_catalog_family_not_blank", nonBlank(table.resourceFamily)),
+  check("permission_catalog_sensitive_bool", sql`${table.isSensitive} IN (0, 1)`),
+  check("permission_catalog_governance_bool", sql`${table.isGovernance} IN (0, 1)`),
+]);
+
+export const roles = crm.table("roles", {
+  id: uuid("id").primaryKey(),
+  code: text("code").notNull(),
+  systemKind: text("system_kind").notNull().default("custom"),
+  currentRevisionId: uuid("current_revision_id").references(() => roleRevisions.id, { onDelete: "restrict" }),
+  adminAssignable: integer("admin_assignable").notNull().default(0),
+  archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+  authorizationRevision: integer("authorization_revision").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  version: integer("version").notNull().default(1),
+}, (table) => [
+  unique("roles_code_unique").on(table.code),
+  check("roles_code_not_blank", nonBlank(table.code)),
+  check("roles_system_kind_valid", sql`${table.systemKind} IN ('custom', 'leader', 'administrator', 'doctor', 'rehabilitologist', 'massage_therapist', 'physiotherapist')`),
+  check("roles_admin_assignable_bool", sql`${table.adminAssignable} IN (0, 1)`),
+  check("roles_authorization_revision_positive", positiveVersion(table.authorizationRevision)),
+  check("roles_version_positive", positiveVersion(table.version)),
+]);
+
+export const roleRevisions = crm.table("role_revisions", {
+  id: uuid("id").primaryKey(),
+  roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "restrict" }),
+  revision: integer("revision").notNull(),
+  publishedByEmployeeId: uuid("published_by_employee_id").references(() => employees.id, { onDelete: "restrict" }),
+  reason: text("reason").notNull(),
+  capabilityHash: text("capability_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  unique("role_revisions_role_revision_unique").on(table.roleId, table.revision),
+  check("role_revisions_revision_positive", sql`${table.revision} > 0`),
+  check("role_revisions_reason_not_blank", nonBlank(table.reason)),
+  check("role_revisions_capability_hash_not_blank", nonBlank(table.capabilityHash)),
+]);
+
+export const roleGrants = crm.table("role_grants", {
+  id: uuid("id").primaryKey(),
+  roleRevisionId: uuid("role_revision_id").notNull().references(() => roleRevisions.id, { onDelete: "restrict" }),
+  permissionCode: text("permission_code").notNull().references(() => permissionCatalog.code, { onDelete: "restrict" }),
+  scope: jsonb("scope").notNull(),
+}, (table) => [
+  unique("role_grants_revision_permission_unique").on(table.roleRevisionId, table.permissionCode),
+]);
+
+export const roleAssignments = crm.table("role_assignments", {
+  id: uuid("id").primaryKey(),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id, { onDelete: "restrict" }),
+  employmentEpochId: uuid("employment_epoch_id").notNull().references(() => employmentEpochs.id, { onDelete: "restrict" }),
+  roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "restrict" }),
+  assignedByEmployeeId: uuid("assigned_by_employee_id").references(() => employees.id, { onDelete: "restrict" }),
+  reason: text("reason").notNull(),
+  assignedAt: timestamp("assigned_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+  version: integer("version").notNull().default(1),
+}, (table) => [
+  uniqueIndex("role_assignments_active_epoch_role_unique")
+    .on(table.employmentEpochId, table.roleId)
+    .where(sql`${table.revokedAt} IS NULL`),
+  index("role_assignments_employee_active_idx").on(table.employeeId).where(sql`${table.revokedAt} IS NULL`),
+  check("role_assignments_reason_not_blank", nonBlank(table.reason)),
+  check("role_assignments_version_positive", positiveVersion(table.version)),
+]);
+
+export const employeePermissionOverrides = crm.table("employee_permission_overrides", {
+  id: uuid("id").primaryKey(),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id, { onDelete: "restrict" }),
+  employmentEpochId: uuid("employment_epoch_id").notNull().references(() => employmentEpochs.id, { onDelete: "restrict" }),
+  permissionCode: text("permission_code").notNull().references(() => permissionCatalog.code, { onDelete: "restrict" }),
+  mode: text("mode").notNull(),
+  scope: jsonb("scope"),
+  grantedByEmployeeId: uuid("granted_by_employee_id").references(() => employees.id, { onDelete: "restrict" }),
+  reason: text("reason").notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+  version: integer("version").notNull().default(1),
+}, (table) => [
+  uniqueIndex("employee_permission_overrides_active_unique")
+    .on(table.employmentEpochId, table.permissionCode)
+    .where(sql`${table.revokedAt} IS NULL`),
+  check("employee_permission_overrides_mode_valid", sql`${table.mode} IN ('replace', 'deny')`),
+  check("employee_permission_overrides_reason_not_blank", nonBlank(table.reason)),
+  check("employee_permission_overrides_scope_valid", sql`(${table.mode} = 'deny' AND ${table.scope} IS NULL) OR (${table.mode} = 'replace' AND ${table.scope} IS NOT NULL)`),
+  check("employee_permission_overrides_version_positive", positiveVersion(table.version)),
+]);
+
+export const crmSessions = crm.table("crm_sessions", {
+  id: uuid("id").primaryKey(),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id, { onDelete: "restrict" }),
+  employmentEpochId: uuid("employment_epoch_id").notNull().references(() => employmentEpochs.id, { onDelete: "restrict" }),
+  authBindingId: uuid("auth_binding_id").notNull().references(() => authBindings.id, { onDelete: "restrict" }),
+  providerSessionId: uuid("provider_session_id").notNull(),
+  familyId: uuid("family_id").notNull(),
+  issuedSessionEpoch: integer("issued_session_epoch").notNull(),
+  issuedCredentialEpoch: integer("issued_credential_epoch").notNull(),
+  accessTokenHash: text("access_token_hash").notNull(),
+  refreshTokenHash: text("refresh_token_hash").notNull(),
+  /** AES-GCM ciphertext of the provider refresh token; the browser never receives it. */
+  providerRefreshTokenCiphertext: text("provider_refresh_token_ciphertext").notNull(),
+  refreshGeneration: integer("refresh_generation").notNull().default(1),
+  lastInteractiveAt: timestamp("last_interactive_at", { withTimezone: true, mode: "date" }).notNull(),
+  idleExpiresAt: timestamp("idle_expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  absoluteExpiresAt: timestamp("absolute_expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  status: text("status").notNull().default("active"),
+  revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+  revokeReason: text("revoke_reason"),
+  providerReconciledAt: timestamp("provider_reconciled_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  revision: integer("revision").notNull().default(1),
+}, (table) => [
+  unique("crm_sessions_provider_session_unique").on(table.providerSessionId),
+  index("crm_sessions_employee_active_idx").on(table.employeeId, table.status).where(sql`${table.status} = 'active'`),
+  index("crm_sessions_family_active_idx").on(table.familyId, table.status).where(sql`${table.status} = 'active'`),
+  check("crm_sessions_status_valid", sql`${table.status} IN ('active', 'revoked', 'expired')`),
+  check("crm_sessions_epochs_positive", sql`${table.issuedSessionEpoch} > 0 AND ${table.issuedCredentialEpoch} > 0 AND ${table.refreshGeneration} > 0 AND ${table.revision} > 0`),
+  check("crm_sessions_deadlines_valid", sql`${table.idleExpiresAt} <= ${table.absoluteExpiresAt}`),
+  check("crm_sessions_access_hash_not_blank", nonBlank(table.accessTokenHash)),
+  check("crm_sessions_refresh_hash_not_blank", nonBlank(table.refreshTokenHash)),
+  check("crm_sessions_provider_refresh_ciphertext_not_blank", nonBlank(table.providerRefreshTokenCiphertext)),
+]);
+
+/**
+ * A durable, password-free record of every locally handled login attempt.
+ * `attemptId` is supplied by the BFF client and makes a lost response safe to
+ * retry without incrementing the lockout counter twice.
+ */
+export const authLoginAttempts = crm.table("auth_login_attempts", {
+  id: uuid("id").primaryKey(),
+  canonicalLogin: text("canonical_login").notNull(),
+  employeeId: uuid("employee_id").references(() => employees.id, { onDelete: "restrict" }),
+  outcome: text("outcome").notNull(),
+  providerAttempted: integer("provider_attempted").notNull().default(0),
+  occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  check("auth_login_attempts_login_not_blank", nonBlank(table.canonicalLogin)),
+  check("auth_login_attempts_outcome_valid", sql`${table.outcome} IN ('succeeded', 'invalid_credentials', 'locked', 'inactive', 'provider_unavailable', 'reconciliation_required')`),
+  check("auth_login_attempts_provider_attempted_bool", sql`${table.providerAttempted} IN (0, 1)`),
+]);
+
+/** One-time, server-owned recovery flow. Neither provider nor CRM tokens reach the browser. */
+export const authRecoveryChallenges = crm.table("auth_recovery_challenges", {
+  id: uuid("id").primaryKey(),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id, { onDelete: "restrict" }),
+  employmentEpochId: uuid("employment_epoch_id").notNull().references(() => employmentEpochs.id, { onDelete: "restrict" }),
+  authBindingId: uuid("auth_binding_id").notNull().references(() => authBindings.id, { onDelete: "restrict" }),
+  stateVerifierHash: text("state_verifier_hash").notNull(),
+  codeVerifierCiphertext: text("code_verifier_ciphertext").notNull(),
+  recoveryGrantHash: text("recovery_grant_hash"),
+  state: text("state").notNull().default("pending"),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  verifiedAt: timestamp("verified_at", { withTimezone: true, mode: "date" }),
+  consumedAt: timestamp("consumed_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("auth_recovery_challenges_one_active_per_employee_unique")
+    .on(table.employeeId)
+    .where(sql`${table.state} IN ('pending', 'verified')`),
+  index("auth_recovery_challenges_expiry_idx").on(table.expiresAt),
+  check("auth_recovery_challenges_state_valid", sql`${table.state} IN ('pending', 'verified', 'consumed', 'expired', 'quarantined')`),
+  check("auth_recovery_challenges_state_hash_not_blank", nonBlank(table.stateVerifierHash)),
+  check("auth_recovery_challenges_verifier_not_blank", nonBlank(table.codeVerifierCiphertext)),
+  check("auth_recovery_challenges_grant_state_valid", sql`(${table.state} = 'verified' AND ${table.recoveryGrantHash} IS NOT NULL AND ${table.verifiedAt} IS NOT NULL) OR (${table.state} <> 'verified' AND ${table.recoveryGrantHash} IS NULL)`),
+]);
+
+export const securityOutbox = crm.table("security_outbox", {
+  id: uuid("id").primaryKey(),
+  operation: text("operation").notNull(),
+  aggregateType: text("aggregate_type").notNull(),
+  aggregateId: uuid("aggregate_id").notNull(),
+  expectedEpoch: integer("expected_epoch"),
+  payload: jsonb("payload").notNull(),
+  state: text("state").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  unique("security_outbox_operation_aggregate_unique").on(table.operation, table.aggregateType, table.aggregateId),
+  check("security_outbox_operation_not_blank", nonBlank(table.operation)),
+  check("security_outbox_aggregate_type_not_blank", nonBlank(table.aggregateType)),
+  check("security_outbox_state_valid", sql`${table.state} IN ('pending', 'processing', 'completed', 'failed', 'quarantined')`),
+  check("security_outbox_attempts_nonnegative", sql`${table.attempts} >= 0`),
 ]);
 
 export const patients = crm.table("patients", {

@@ -13,6 +13,7 @@
     "db:migrate": "bun scripts/migrate.ts",
     "test:db": "bun scripts/require-test-database.ts && vitest run --config vitest.db.config.ts tests/database.integration.test.ts tests/integrity.integration.test.ts",
     "test:db:performance": "bun scripts/require-test-database.ts && vitest run --config vitest.db.config.ts tests/database.performance.test.ts",
+    "auth:bootstrap-initial-leader": "bun scripts/bootstrap-initial-leader.ts",
     "db:schema:check": "drizzle-kit check --config drizzle.config.ts && bun scripts/check-schema.ts",
     "hyperdrive:preflight": "bun scripts/hyperdrive-preflight.ts"
   },
