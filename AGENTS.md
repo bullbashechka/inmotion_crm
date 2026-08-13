@@ -37,9 +37,16 @@ Use these sources in descending order of specificity:
 
 Do not implement capabilities excluded by `PRD.md`. Do not treat dormant code, an unused dependency, or a documentation mention as a product requirement. When documentation and implementation disagree, identify the drift and align the owning source when practical.
 
-## Delivery Sequence and Design Start
+## Delivery Sequence and Design Work Location
 
-Full product interface design and visual implementation begin with task 005, `tasks/005-app-shell-dashboard.md`. Tasks 001–004 establish the contracts, persistence, integrity, authentication, permissions, and other foundations on which the interface depends.
+Product design does not live in a separate late-stage task. Its cross-product foundation begins with task 005, `tasks/005-app-shell-dashboard.md`, after tasks 001–004 establish the contracts, persistence, integrity, authentication, permissions, and other foundations on which the interface depends.
+
+- `DESIGN.md` is the source of truth for visual language, interaction rules, tokens, layout, responsive behavior, accessibility, and UI review.
+- Task 005 owns the initial design-system application and shared product experience: tokens, application shell, navigation, page structure, dashboard patterns, common states, and reusable primitives.
+- Design implementation lives in `webapp/src/`; reusable visual primitives belong in `webapp/src/components/ui/` unless the existing architecture provides a more specific shared location.
+- Tasks 006–022 own the design and implementation of their feature-specific screens, flows, and states, built on the foundation established in task 005. Do not defer all feature design to a separate future phase.
+- Task 001 only establishes the frontend styling and component tooling. UI required for authentication or validation in tasks 001–004 is supporting scaffolding, not the start of the full product design.
+- Tasks 023–024 validate and harden realtime behavior, observability, accessibility, performance, and release quality; they do not replace design work in the owning product tasks.
 
 - Before starting app-shell, dashboard, design-system application, or broad visual implementation, verify the completion status of tasks 001–004 in `TASKS.md` and against their acceptance criteria.
 - If task 005 or later design work is requested while any dependency from tasks 001–004 is incomplete, explicitly warn the user before implementation. Name the incomplete dependencies and explain that design work may be provisional or require rework.
