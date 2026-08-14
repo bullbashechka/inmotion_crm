@@ -1,0 +1,2 @@
+ALTER TABLE "crm"."employees" ADD CONSTRAINT "employees_current_employment_epoch_id_employment_epochs_id_fk" FOREIGN KEY ("current_employment_epoch_id") REFERENCES "crm"."employment_epochs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "crm"."roles" ADD CONSTRAINT "roles_current_revision_id_role_revisions_id_fk" FOREIGN KEY ("current_revision_id") REFERENCES "crm"."role_revisions"("id") ON DELETE restrict ON UPDATE no action;

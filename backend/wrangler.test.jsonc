@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "inmotion-crm-api-tests",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "APP_ENV": "local",
+    "APP_BUILD_VERSION": "dev",
+    "SUPPORTED_CLIENT_VERSIONS": "dev",
+    "CORS_ORIGINS": "http://localhost:5173"
+  }
+}

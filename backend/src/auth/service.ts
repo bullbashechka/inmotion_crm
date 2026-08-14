@@ -1,0 +1,1009 @@
+import { sql } from "drizzle-orm";
+
+import type { AuthSession, AuthSessionState } from "@inmotion-crm/contracts";
+
+import type { RequestDatabase } from "../db/integrity";
+import { createUuidV7 } from "../db/uuidv7";
+import { canonicalizeLogin, createOpaqueToken, createPkceChallenge, hashSecret, secretsEqual, type AuthTokenCipher } from "./crypto";
+import type { AuthProvider, ProviderSession } from "./provider";
+
+const idleWindowMs = 30 * 60 * 1000;
+const warningWindowMs = 5 * 60 * 1000;
+const absoluteWindowMs = 12 * 60 * 60 * 1000;
+const providerReconciliationWindowMs = 30 * 60 * 1000;
+
+type DatabaseRunner = <T>(callback: (database: RequestDatabase) => Promise<T>) => Promise<T>;
+
+type DbTime = { now: Date };
+
+type IdentityRow = {
+  employeeId: string;
+  employmentEpochId: string | null;
+  employmentState: string;
+  accessState: string | null;
+  credentialState: string | null;
+  loginFailureCount: number | null;
+  loginLockedUntil: Date | null;
+  sessionEpoch: number | null;
+  credentialEpoch: number | null;
+  bindingId: string | null;
+  providerSubjectId: string | null;
+  providerNamespace: string | null;
+  bindingState: string | null;
+};
+
+type SessionRow = {
+  id: string;
+  employeeId: string;
+  employmentEpochId: string;
+  authBindingId: string;
+  providerSessionId: string;
+  issuedSessionEpoch: number;
+  issuedCredentialEpoch: number;
+  accessTokenHash: string;
+  refreshTokenHash: string;
+  providerRefreshTokenCiphertext: string;
+  lastInteractiveAt: Date;
+  idleExpiresAt: Date;
+  absoluteExpiresAt: Date;
+  status: string;
+  revision: number;
+  providerReconciledAt: Date | null;
+  accessState: string;
+  credentialState: string;
+  currentSessionEpoch: number;
+  currentCredentialEpoch: number;
+  employmentState: string;
+  bindingState: string;
+  providerSubjectId: string;
+  providerNamespace: string;
+};
+
+type RecoveryChallengeRow = {
+  id: string;
+  employeeId: string;
+  employmentEpochId: string;
+  authBindingId: string;
+  stateVerifierHash: string;
+  codeVerifierCiphertext: string;
+  recoveryGrantHash: string | null;
+  state: string;
+  expiresAt: Date;
+  providerSubjectId: string;
+  providerNamespace: string;
+  accessState: string;
+  credentialState: string;
+  employmentState: string;
+  bindingState: string;
+};
+
+export class AuthServiceError extends Error {
+  constructor(
+    readonly code: string,
+    readonly status: 401 | 403 | 409 | 423 | 503,
+    readonly retryable: boolean,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AuthServiceError";
+  }
+}
+
+export type IssuedSession = {
+  accessToken: string;
+  accessTokenExpiresAt: string;
+  refreshToken: string;
+  session: AuthSession;
+};
+
+export type AuthenticatedRequest = {
+  employeeId: string;
+  employmentEpochId: string;
+  session: AuthSession;
+  credentialState: "ready" | "password_change_required";
+};
+
+export type AuthServiceOptions = {
+  withDatabase: DatabaseRunner;
+  provider: AuthProvider;
+  tokenCipher: AuthTokenCipher;
+  providerNamespace: string;
+  recoveryCallbackUrl: string;
+  recoveryCompleteUrl: string;
+};
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
+}
+
+function sessionState(row: Pick<SessionRow, "lastInteractiveAt" | "idleExpiresAt" | "absoluteExpiresAt">, now: Date, credentialState: string): AuthSessionState {
+  if (credentialState === "temporary_password" || credentialState === "password_change_required") return "password_change_required";
+  const warningAt = Math.min(row.idleExpiresAt.getTime(), row.lastInteractiveAt.getTime() + idleWindowMs) - warningWindowMs;
+  return now.getTime() >= warningAt ? "warning" : "active";
+}
+
+function toAuthSession(row: SessionRow, now: Date): AuthSession {
+  const state = sessionState(row, now, row.credentialState);
+  return {
+    id: row.id,
+    employeeId: row.employeeId,
+    state,
+    serverNow: now.toISOString(),
+    warningAt: new Date(Math.min(row.idleExpiresAt.getTime(), row.lastInteractiveAt.getTime() + idleWindowMs) - warningWindowMs).toISOString(),
+    idleExpiresAt: row.idleExpiresAt.toISOString(),
+    absoluteExpiresAt: row.absoluteExpiresAt.toISOString(),
+    revision: row.revision,
+  };
+}
+
+async function databaseNow(database: RequestDatabase): Promise<Date> {
+  const result = await database.execute<DbTime>(sql`SELECT clock_timestamp() AS now`);
+  const now = result.rows[0]?.now;
+  if (now === undefined) throw new Error("Database clock is unavailable.");
+  return now;
+}
+
+function isActiveIdentity(identity: IdentityRow, now: Date): boolean {
+  return identity.employmentState === "active"
+    && identity.accessState === "active"
+    && (identity.credentialState === "ready" || identity.credentialState === "temporary_password" || identity.credentialState === "password_change_required")
+    && identity.bindingState === "active"
+    && identity.employmentEpochId !== null
+    && identity.bindingId !== null
+    && identity.providerSubjectId !== null
+    && (identity.loginLockedUntil === null || identity.loginLockedUntil.getTime() <= now.getTime());
+}
+
+function genericSignInError(): AuthServiceError {
+  return new AuthServiceError("INVALID_CREDENTIALS", 401, false, "Неверный логин или пароль.");
+}
+
+function lockError(): AuthServiceError {
+  return new AuthServiceError("LOGIN_LOCKED", 423, false, "Вход временно заблокирован. Повторите попытку позже.");
+}
+
+async function insertAttempt(
+  database: RequestDatabase,
+  input: { id: string; canonicalLogin: string; employeeId: string | null; outcome: string; providerAttempted: boolean },
+): Promise<boolean> {
+  const inserted = await database.execute<{ id: string }>(sql`
+    INSERT INTO crm.auth_login_attempts (id, canonical_login, employee_id, outcome, provider_attempted)
+    VALUES (
+      ${input.id}::uuid,
+      ${input.canonicalLogin}::text,
+      ${input.employeeId}::uuid,
+      ${input.outcome}::text,
+      ${input.providerAttempted ? 1 : 0}::integer
+    )
+    ON CONFLICT (id) DO NOTHING
+    RETURNING id
+  `);
+  return inserted.rows.length === 1;
+}
+
+async function insertAudit(
+  database: RequestDatabase,
+  input: { actorEmployeeId?: string | null; action: string; entityType: string; entityId: string; reason: string; after?: Record<string, unknown> },
+): Promise<void> {
+  await database.execute(sql`
+    INSERT INTO crm.audit_entries (
+      id, actor_employee_id, action, category, view_scope,
+      entity_type, entity_id, reason, after
+    ) VALUES (
+      ${createUuidV7()}::uuid,
+      ${input.actorEmployeeId ?? null}::uuid,
+      ${input.action}::text,
+      'security'::text,
+      'auth'::text,
+      ${input.entityType}::text,
+      ${input.entityId}::uuid,
+      ${input.reason}::text,
+      ${input.after === undefined ? null : JSON.stringify(input.after)}::jsonb
+    )
+  `);
+}
+
+async function findIdentityForLogin(database: RequestDatabase, canonicalLogin: string, lock = false): Promise<IdentityRow | null> {
+  const result = await database.execute<IdentityRow>(sql`
+    SELECT
+      employee.id AS "employeeId",
+      epoch.id AS "employmentEpochId",
+      epoch.state AS "employmentState",
+      security.access_state AS "accessState",
+      security.credential_state AS "credentialState",
+      security.login_failure_count AS "loginFailureCount",
+      security.login_locked_until AS "loginLockedUntil",
+      security.session_epoch AS "sessionEpoch",
+      security.credential_epoch AS "credentialEpoch",
+      binding.id AS "bindingId",
+      binding.provider_subject_id AS "providerSubjectId",
+      binding.provider_namespace AS "providerNamespace",
+      binding.state AS "bindingState"
+    FROM crm.login_claims AS claim
+    JOIN crm.employment_epochs AS epoch ON epoch.id = claim.employment_epoch_id
+    JOIN crm.employees AS employee ON employee.id = epoch.employee_id
+    LEFT JOIN crm.employee_security_states AS security
+      ON security.employee_id = employee.id AND security.employment_epoch_id = epoch.id
+    LEFT JOIN crm.auth_bindings AS binding
+      ON binding.employment_epoch_id = epoch.id AND binding.state = 'active'
+    WHERE claim.canonical_login = ${canonicalLogin}::text
+      AND claim.state = 'active'
+    ORDER BY binding.confirmed_at DESC NULLS LAST
+    LIMIT 1
+    ${lock ? sql`FOR UPDATE OF claim, epoch, employee, security` : sql``}
+  `);
+  return result.rows[0] ?? null;
+}
+
+async function findSessionByHash(database: RequestDatabase, column: "access" | "refresh", tokenHash: string, lock = false): Promise<SessionRow | null> {
+  const filter = column === "access"
+    ? sql`session.access_token_hash = ${tokenHash}::text`
+    : sql`session.refresh_token_hash = ${tokenHash}::text`;
+  const result = await database.execute<SessionRow>(sql`
+    SELECT
+      session.id,
+      session.employee_id AS "employeeId",
+      session.employment_epoch_id AS "employmentEpochId",
+      session.auth_binding_id AS "authBindingId",
+      session.provider_session_id AS "providerSessionId",
+      session.issued_session_epoch AS "issuedSessionEpoch",
+      session.issued_credential_epoch AS "issuedCredentialEpoch",
+      session.access_token_hash AS "accessTokenHash",
+      session.refresh_token_hash AS "refreshTokenHash",
+      session.provider_refresh_token_ciphertext AS "providerRefreshTokenCiphertext",
+      session.last_interactive_at AS "lastInteractiveAt",
+      session.idle_expires_at AS "idleExpiresAt",
+      session.absolute_expires_at AS "absoluteExpiresAt",
+      session.status,
+      session.revision,
+      session.provider_reconciled_at AS "providerReconciledAt",
+      security.access_state AS "accessState",
+      security.credential_state AS "credentialState",
+      security.session_epoch AS "currentSessionEpoch",
+      security.credential_epoch AS "currentCredentialEpoch",
+      epoch.state AS "employmentState",
+      binding.state AS "bindingState",
+      binding.provider_subject_id AS "providerSubjectId"
+      , binding.provider_namespace AS "providerNamespace"
+    FROM crm.crm_sessions AS session
+    JOIN crm.employee_security_states AS security ON security.employee_id = session.employee_id
+    JOIN crm.employment_epochs AS epoch ON epoch.id = session.employment_epoch_id
+    JOIN crm.auth_bindings AS binding ON binding.id = session.auth_binding_id
+    WHERE ${filter}
+    LIMIT 1
+    ${lock ? sql`FOR UPDATE OF session, security, epoch, binding` : sql``}
+  `);
+  return result.rows[0] ?? null;
+}
+
+async function findRecoveryChallenge(database: RequestDatabase, challengeId: string, lock = false): Promise<RecoveryChallengeRow | null> {
+  const result = await database.execute<RecoveryChallengeRow>(sql`
+    SELECT
+      challenge.id,
+      challenge.employee_id AS "employeeId",
+      challenge.employment_epoch_id AS "employmentEpochId",
+      challenge.auth_binding_id AS "authBindingId",
+      challenge.state_verifier_hash AS "stateVerifierHash",
+      challenge.code_verifier_ciphertext AS "codeVerifierCiphertext",
+      challenge.recovery_grant_hash AS "recoveryGrantHash",
+      challenge.state,
+      challenge.expires_at AS "expiresAt",
+      binding.provider_subject_id AS "providerSubjectId",
+      binding.provider_namespace AS "providerNamespace",
+      security.access_state AS "accessState",
+      security.credential_state AS "credentialState",
+      epoch.state AS "employmentState",
+      binding.state AS "bindingState"
+    FROM crm.auth_recovery_challenges AS challenge
+    JOIN crm.employee_security_states AS security ON security.employee_id = challenge.employee_id
+    JOIN crm.employment_epochs AS epoch ON epoch.id = challenge.employment_epoch_id
+    JOIN crm.auth_bindings AS binding ON binding.id = challenge.auth_binding_id
+    WHERE challenge.id = ${challengeId}::uuid
+    LIMIT 1
+    ${lock ? sql`FOR UPDATE OF challenge, security, epoch, binding` : sql``}
+  `);
+  return result.rows[0] ?? null;
+}
+
+function assertSessionUsable(row: SessionRow, now: Date, route: "crm_session" | "password_change", providerNamespace: string): void {
+  if (
+    row.status !== "active"
+    || row.accessState !== "active"
+    || row.employmentState !== "active"
+    || row.bindingState !== "active"
+    || row.providerNamespace !== providerNamespace
+    || row.issuedSessionEpoch !== row.currentSessionEpoch
+    || row.issuedCredentialEpoch !== row.currentCredentialEpoch
+    || row.idleExpiresAt.getTime() <= now.getTime()
+    || row.absoluteExpiresAt.getTime() <= now.getTime()
+  ) throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+
+  const requiresPasswordChange = row.credentialState === "temporary_password" || row.credentialState === "password_change_required";
+  if (route === "crm_session" && requiresPasswordChange) {
+    throw new AuthServiceError("PASSWORD_CHANGE_REQUIRED", 403, false, "Необходимо сменить временный пароль.");
+  }
+  if (route === "password_change" && !requiresPasswordChange && row.credentialState !== "ready") {
+    throw new AuthServiceError("SESSION_NOT_ALLOWED", 403, false, "Эта сессия не может изменить пароль.");
+  }
+}
+
+function assertProviderSessionMatches(identity: IdentityRow, providerSession: ProviderSession, expectedLogin: string): void {
+  if (identity.providerSubjectId !== providerSession.subjectId || providerSession.login !== expectedLogin || !providerSession.authenticationMethods.includes("password")) {
+    throw new AuthServiceError("IDENTITY_RECONCILIATION_REQUIRED", 409, false, "Учётная запись требует проверки безопасности.");
+  }
+}
+
+export class AuthService {
+  constructor(private readonly options: AuthServiceOptions) {}
+
+  async signIn(input: { login: string; password: string; attemptId: string }): Promise<IssuedSession> {
+    const canonicalLogin = canonicalizeLogin(input.login);
+    if (canonicalLogin === null || !isUuid(input.attemptId)) {
+      throw genericSignInError();
+    }
+
+    const preflight = await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const now = await databaseNow(transaction);
+      const identity = await findIdentityForLogin(transaction, canonicalLogin, true);
+      if (identity === null) {
+        const inserted = await insertAttempt(transaction, { id: input.attemptId, canonicalLogin, employeeId: null, outcome: "invalid_credentials", providerAttempted: false });
+        if (inserted) await insertAudit(transaction, { action: "auth.login.failed", entityType: "authLoginAttempt", entityId: input.attemptId, reason: "invalid_credentials" });
+        return { kind: "invalid" as const };
+      }
+      if (identity.loginLockedUntil !== null && identity.loginLockedUntil.getTime() <= now.getTime()) {
+        await transaction.execute(sql`
+          UPDATE crm.employee_security_states
+          SET login_failure_count = 0, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
+          WHERE employee_id = ${identity.employeeId}::uuid
+        `);
+        identity.loginFailureCount = 0;
+        identity.loginLockedUntil = null;
+      }
+      if (identity.loginLockedUntil !== null && identity.loginLockedUntil.getTime() > now.getTime()) {
+        const inserted = await insertAttempt(transaction, { id: input.attemptId, canonicalLogin, employeeId: identity.employeeId, outcome: "locked", providerAttempted: false });
+        if (inserted) await insertAudit(transaction, { actorEmployeeId: identity.employeeId, action: "auth.login.locked", entityType: "authLoginAttempt", entityId: input.attemptId, reason: "lock_active" });
+        return { kind: "locked" as const };
+      }
+      if (!isActiveIdentity(identity, now) || identity.providerNamespace !== this.options.providerNamespace) {
+        const inserted = await insertAttempt(transaction, { id: input.attemptId, canonicalLogin, employeeId: identity.employeeId, outcome: "inactive", providerAttempted: false });
+        if (inserted) await insertAudit(transaction, { actorEmployeeId: identity.employeeId, action: "auth.login.denied", entityType: "authLoginAttempt", entityId: input.attemptId, reason: "identity_not_eligible" });
+        return { kind: "invalid" as const };
+      }
+      return { kind: "eligible" as const, identity };
+    }));
+
+    if (preflight.kind === "locked") throw lockError();
+    if (preflight.kind === "invalid") throw genericSignInError();
+
+    const providerResult = await this.options.provider.signInWithPassword({ login: canonicalLogin, password: input.password });
+    if (providerResult.kind === "unavailable") {
+      await this.recordAttempt(input.attemptId, canonicalLogin, preflight.identity.employeeId, "provider_unavailable", true, "auth.login.provider_unavailable");
+      throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Служба входа временно недоступна. Повторите попытку.");
+    }
+    if (providerResult.kind === "invalid_credentials") {
+      await this.recordInvalidPasswordAttempt(input.attemptId, canonicalLogin, preflight.identity.employeeId);
+      throw genericSignInError();
+    }
+
+    try {
+      assertProviderSessionMatches(preflight.identity, providerResult.session, canonicalLogin);
+    } catch (error) {
+      await this.quarantineIdentity(preflight.identity.employeeId, input.attemptId, "provider_identity_mismatch");
+      void this.options.provider.banUser(providerResult.session.subjectId);
+      throw error;
+    }
+
+    const accessToken = createOpaqueToken();
+    const refreshToken = createOpaqueToken();
+    const accessTokenHash = await hashSecret(accessToken);
+    const refreshTokenHash = await hashSecret(refreshToken);
+    const providerRefreshTokenCiphertext = await this.options.tokenCipher.encrypt(providerResult.session.refreshToken);
+
+    return this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const now = await databaseNow(transaction);
+      const identity = await findIdentityForLogin(transaction, canonicalLogin, true);
+      if (identity === null || !isActiveIdentity(identity, now) || identity.providerNamespace !== this.options.providerNamespace) {
+        void this.options.provider.banUser(providerResult.session.subjectId);
+        throw genericSignInError();
+      }
+      try {
+        assertProviderSessionMatches(identity, providerResult.session, canonicalLogin);
+      } catch (error) {
+        await transaction.execute(sql`
+          UPDATE crm.employee_security_states
+          SET access_state = 'security_quarantined', session_epoch = session_epoch + 1,
+              updated_at = clock_timestamp(), version = version + 1
+          WHERE employee_id = ${identity.employeeId}::uuid
+        `);
+        await insertAudit(transaction, { actorEmployeeId: identity.employeeId, action: "auth.identity.quarantined", entityType: "authLoginAttempt", entityId: input.attemptId, reason: "post_provider_identity_mismatch" });
+        void this.options.provider.banUser(providerResult.session.subjectId);
+        throw error;
+      }
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET login_failure_count = 0, login_locked_until = NULL,
+            updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${identity.employeeId}::uuid
+          AND employment_epoch_id = ${identity.employmentEpochId}::uuid
+      `);
+      const sessionId = createUuidV7();
+      const inserted = await transaction.execute<Pick<SessionRow, "id" | "employeeId" | "lastInteractiveAt" | "idleExpiresAt" | "absoluteExpiresAt" | "revision">>(sql`
+        INSERT INTO crm.crm_sessions (
+          id, employee_id, employment_epoch_id, auth_binding_id, provider_session_id,
+          family_id, issued_session_epoch, issued_credential_epoch, access_token_hash,
+          refresh_token_hash, provider_refresh_token_ciphertext, last_interactive_at,
+          idle_expires_at, absolute_expires_at, provider_reconciled_at
+        ) VALUES (
+          ${sessionId}::uuid,
+          ${identity.employeeId}::uuid,
+          ${identity.employmentEpochId}::uuid,
+          ${identity.bindingId}::uuid,
+          ${providerResult.session.sessionId}::uuid,
+          ${createUuidV7()}::uuid,
+          ${identity.sessionEpoch}::integer,
+          ${identity.credentialEpoch}::integer,
+          ${accessTokenHash}::text,
+          ${refreshTokenHash}::text,
+          ${providerRefreshTokenCiphertext}::text,
+          clock_timestamp(),
+          clock_timestamp() + interval '30 minutes',
+          clock_timestamp() + interval '12 hours',
+          clock_timestamp()
+        )
+        RETURNING
+          id,
+          employee_id AS "employeeId",
+          last_interactive_at AS "lastInteractiveAt",
+          idle_expires_at AS "idleExpiresAt",
+          absolute_expires_at AS "absoluteExpiresAt",
+          revision
+      `);
+      const session = inserted.rows[0];
+      if (session === undefined) throw new Error("CRM session was not created.");
+      const attemptInserted = await insertAttempt(transaction, { id: input.attemptId, canonicalLogin, employeeId: identity.employeeId, outcome: "succeeded", providerAttempted: true });
+      if (attemptInserted) await insertAudit(transaction, { actorEmployeeId: identity.employeeId, action: "auth.login.succeeded", entityType: "crmSession", entityId: session.id, reason: "password_verified" });
+      const completed: SessionRow = {
+        ...session,
+        employmentEpochId: identity.employmentEpochId,
+        authBindingId: identity.bindingId,
+        providerSessionId: providerResult.session.sessionId,
+        issuedSessionEpoch: identity.sessionEpoch ?? 1,
+        issuedCredentialEpoch: identity.credentialEpoch ?? 1,
+        accessTokenHash,
+        refreshTokenHash,
+        providerRefreshTokenCiphertext,
+        status: "active",
+        providerReconciledAt: now,
+        accessState: "active",
+        credentialState: identity.credentialState ?? "ready",
+        currentSessionEpoch: identity.sessionEpoch ?? 1,
+        currentCredentialEpoch: identity.credentialEpoch ?? 1,
+        employmentState: "active",
+        bindingState: "active",
+        providerSubjectId: providerResult.session.subjectId,
+        providerNamespace: this.options.providerNamespace,
+      };
+      return {
+        accessToken,
+        accessTokenExpiresAt: session.idleExpiresAt.toISOString(),
+        refreshToken,
+        session: toAuthSession(completed, now),
+      };
+    }));
+  }
+
+  async authenticate(accessToken: string, route: "crm_session" | "password_change"): Promise<AuthenticatedRequest> {
+    const tokenHash = await hashSecret(accessToken);
+    let checked = await this.options.withDatabase(async (database) => {
+      const now = await databaseNow(database);
+      const session = await findSessionByHash(database, "access", tokenHash);
+      if (session === null) throw new AuthServiceError("AUTHENTICATION_REQUIRED", 401, false, "Требуется действующая сессия CRM.");
+      assertSessionUsable(session, now, route, this.options.providerNamespace);
+      return { session, now };
+    });
+
+    if (checked.session.providerReconciledAt === null || checked.now.getTime() - checked.session.providerReconciledAt.getTime() >= providerReconciliationWindowMs) {
+      checked = await this.reconcileProviderSession(tokenHash, route);
+    }
+
+    return {
+      employeeId: checked.session.employeeId,
+      employmentEpochId: checked.session.employmentEpochId,
+      session: toAuthSession(checked.session, checked.now),
+      credentialState: checked.session.credentialState === "ready" ? "ready" : "password_change_required",
+    };
+  }
+
+  async continueSession(accessToken: string): Promise<AuthSession> {
+    const tokenHash = await hashSecret(accessToken);
+    return this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const now = await databaseNow(transaction);
+      const row = await findSessionByHash(transaction, "access", tokenHash, true);
+      if (row === null) throw new AuthServiceError("AUTHENTICATION_REQUIRED", 401, false, "Требуется действующая сессия CRM.");
+      assertSessionUsable(row, now, "crm_session", this.options.providerNamespace);
+      const warningAt = Math.min(row.idleExpiresAt.getTime(), row.lastInteractiveAt.getTime() + idleWindowMs) - warningWindowMs;
+      if (now.getTime() < warningAt) throw new AuthServiceError("SESSION_CONTINUE_NOT_AVAILABLE", 409, false, "Продление доступно только в окне предупреждения.");
+      const nextIdle = new Date(Math.min(now.getTime() + idleWindowMs, row.absoluteExpiresAt.getTime()));
+      const updated = await transaction.execute<Pick<SessionRow, "lastInteractiveAt" | "idleExpiresAt" | "revision">>(sql`
+        UPDATE crm.crm_sessions
+        SET last_interactive_at = clock_timestamp(), idle_expires_at = ${nextIdle}::timestamptz,
+            updated_at = clock_timestamp(), revision = revision + 1
+        WHERE id = ${row.id}::uuid AND status = 'active'
+        RETURNING last_interactive_at AS "lastInteractiveAt", idle_expires_at AS "idleExpiresAt", revision
+      `);
+      const values = updated.rows[0];
+      if (values === undefined) throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+      return toAuthSession({ ...row, ...values }, now);
+    }));
+  }
+
+  async revokeSession(accessToken: string, reason = "user_logout"): Promise<void> {
+    const tokenHash = await hashSecret(accessToken);
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const row = await findSessionByHash(transaction, "access", tokenHash, true);
+      if (row === null) return;
+      await transaction.execute(sql`
+        UPDATE crm.crm_sessions
+        SET status = 'revoked', revoked_at = clock_timestamp(), revoke_reason = ${reason}::text,
+            updated_at = clock_timestamp(), revision = revision + 1
+        WHERE id = ${row.id}::uuid AND status = 'active'
+      `);
+      await insertAudit(transaction, { actorEmployeeId: row.employeeId, action: "auth.logout", entityType: "crmSession", entityId: row.id, reason });
+    }));
+  }
+
+  /**
+   * The current password is verified with the provider before its admin update.
+   * Any ambiguous provider outcome leaves the CRM identity fail-closed until an
+   * operator reconciles it; we never roll credentials back after dispatch.
+   */
+  async changePassword(accessToken: string, input: { currentPassword: string; newPassword: string }): Promise<void> {
+    const authenticated = await this.authenticate(accessToken, "password_change");
+    const login = await this.options.withDatabase(async (database) => {
+      const result = await database.execute<{ canonicalLogin: string; providerSubjectId: string }>(sql`
+        SELECT claim.canonical_login AS "canonicalLogin", binding.provider_subject_id AS "providerSubjectId"
+        FROM crm.login_claims AS claim
+        JOIN crm.auth_bindings AS binding ON binding.employment_epoch_id = claim.employment_epoch_id
+        WHERE claim.employment_epoch_id = ${authenticated.employmentEpochId}::uuid
+          AND claim.state = 'active'
+          AND binding.state = 'active'
+        LIMIT 1
+      `);
+      const row = result.rows[0];
+      if (row === undefined) throw new AuthServiceError("IDENTITY_RECONCILIATION_REQUIRED", 409, false, "Учётная запись требует проверки безопасности.");
+      return row;
+    });
+    const verification = await this.options.provider.signInWithPassword({ login: login.canonicalLogin, password: input.currentPassword });
+    if (verification.kind === "unavailable") throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Служба входа временно недоступна. Повторите попытку.");
+    if (verification.kind === "invalid_credentials" || verification.session.subjectId !== login.providerSubjectId || !verification.session.authenticationMethods.includes("password")) {
+      throw genericSignInError();
+    }
+
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET credential_state = 'changing', updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${authenticated.employeeId}::uuid
+          AND employment_epoch_id = ${authenticated.employmentEpochId}::uuid
+          AND credential_state IN ('temporary_password', 'password_change_required', 'ready')
+      `);
+    }));
+    const updated = await this.options.provider.updatePassword({ subjectId: login.providerSubjectId, password: input.newPassword });
+    if (updated !== "updated") {
+      await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+        await transaction.execute(sql`
+          UPDATE crm.employee_security_states
+          SET credential_state = 'reconciliation_required', session_epoch = session_epoch + 1,
+              updated_at = clock_timestamp(), version = version + 1
+          WHERE employee_id = ${authenticated.employeeId}::uuid
+        `);
+        await transaction.execute(sql`
+          UPDATE crm.crm_sessions
+          SET status = 'revoked', revoked_at = clock_timestamp(), revoke_reason = 'password_change_ambiguous',
+              updated_at = clock_timestamp(), revision = revision + 1
+          WHERE employee_id = ${authenticated.employeeId}::uuid AND status = 'active'
+        `);
+        await insertAudit(transaction, { actorEmployeeId: authenticated.employeeId, action: "auth.password.change_reconciliation_required", entityType: "employee", entityId: authenticated.employeeId, reason: "provider_update_ambiguous" });
+      }));
+      throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Пароль требует проверки безопасности. Обратитесь к руководителю.");
+    }
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET credential_state = 'ready', credential_epoch = credential_epoch + 1, session_epoch = session_epoch + 1,
+            login_failure_count = 0, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${authenticated.employeeId}::uuid
+          AND employment_epoch_id = ${authenticated.employmentEpochId}::uuid
+      `);
+      await transaction.execute(sql`
+        UPDATE crm.crm_sessions
+        SET status = 'revoked', revoked_at = clock_timestamp(), revoke_reason = 'password_changed',
+            updated_at = clock_timestamp(), revision = revision + 1
+        WHERE employee_id = ${authenticated.employeeId}::uuid AND status = 'active'
+      `);
+      await insertAudit(transaction, { actorEmployeeId: authenticated.employeeId, action: "auth.password.changed", entityType: "employee", entityId: authenticated.employeeId, reason: "current_password_verified" });
+    }));
+  }
+
+  /** Enumeration-safe request; only a known active identity reaches the provider. */
+  async requestPasswordRecovery(login: string): Promise<void> {
+    const canonicalLogin = canonicalizeLogin(login);
+    if (canonicalLogin === null) return;
+    const identity = await this.options.withDatabase(async (database) => {
+      const now = await databaseNow(database);
+      return findIdentityForLogin(database, canonicalLogin).then((row) => row !== null && isActiveIdentity(row, now) ? row : null);
+    });
+    if (identity === null) return;
+    const challengeId = createUuidV7();
+    const stateVerifier = createOpaqueToken();
+    const codeVerifier = createOpaqueToken(48);
+    const [stateVerifierHash, codeVerifierCiphertext, codeChallenge] = await Promise.all([
+      hashSecret(stateVerifier),
+      this.options.tokenCipher.encrypt(codeVerifier),
+      createPkceChallenge(codeVerifier),
+    ]);
+    const redirectTo = new URL(this.options.recoveryCallbackUrl);
+    redirectTo.searchParams.set("challenge", challengeId);
+    redirectTo.searchParams.set("state", stateVerifier);
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      await transaction.execute(sql`
+        UPDATE crm.auth_recovery_challenges
+        SET state = 'expired', recovery_grant_hash = NULL
+        WHERE employee_id = ${identity.employeeId}::uuid
+          AND state IN ('pending', 'verified')
+      `);
+      await transaction.execute(sql`
+        INSERT INTO crm.auth_recovery_challenges (
+          id, employee_id, employment_epoch_id, auth_binding_id,
+          state_verifier_hash, code_verifier_ciphertext, expires_at
+        ) VALUES (
+          ${challengeId}::uuid, ${identity.employeeId}::uuid, ${identity.employmentEpochId}::uuid,
+          ${identity.bindingId}::uuid, ${stateVerifierHash}::text,
+          ${codeVerifierCiphertext}::text, clock_timestamp() + interval '15 minutes'
+        )
+      `);
+    }));
+    const outcome = await this.options.provider.sendPasswordRecovery({ login: canonicalLogin, redirectTo: redirectTo.toString(), codeChallenge });
+    if (outcome === "unavailable") throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Служба восстановления временно недоступна. Повторите попытку.");
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      await insertAudit(transaction, { actorEmployeeId: identity.employeeId, action: "auth.password.recovery_requested", entityType: "employee", entityId: identity.employeeId, reason: "bff_recovery_request" });
+    }));
+  }
+
+  /** Exchanges the provider's PKCE code server-side and issues an opaque one-time recovery grant. */
+  async completePasswordRecovery(input: { challengeId: string; stateVerifier: string; code: string }): Promise<{ recoveryGrant: string; redirectTo: string }> {
+    if (!isUuid(input.challengeId) || input.stateVerifier.length < 32 || input.code.length < 8) {
+      throw new AuthServiceError("RECOVERY_LINK_INVALID", 401, false, "Ссылка для восстановления недействительна или устарела.");
+    }
+    const initial = await this.options.withDatabase(async (database) => {
+      const now = await databaseNow(database);
+      const challenge = await findRecoveryChallenge(database, input.challengeId);
+      if (
+        challenge === null
+        || challenge.state !== "pending"
+        || challenge.expiresAt.getTime() <= now.getTime()
+        || !secretsEqual(challenge.stateVerifierHash, await hashSecret(input.stateVerifier))
+        || challenge.providerNamespace !== this.options.providerNamespace
+        || challenge.accessState !== "active"
+        || challenge.employmentState !== "active"
+        || challenge.bindingState !== "active"
+      ) throw new AuthServiceError("RECOVERY_LINK_INVALID", 401, false, "Ссылка для восстановления недействительна или устарела.");
+      return challenge;
+    });
+    let codeVerifier: string;
+    try {
+      codeVerifier = await this.options.tokenCipher.decrypt(initial.codeVerifierCiphertext);
+    } catch {
+      await this.expireRecoveryChallenge(initial.id, "recovery_verifier_unreadable");
+      throw new AuthServiceError("RECOVERY_LINK_INVALID", 401, false, "Ссылка для восстановления недействительна или устарела.");
+    }
+    const providerResult = await this.options.provider.exchangeRecoveryCode({ code: input.code, codeVerifier });
+    if (providerResult.kind === "unavailable") throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Служба восстановления временно недоступна. Повторите попытку.");
+    if (
+      providerResult.kind === "invalid_credentials"
+      || providerResult.session.subjectId !== initial.providerSubjectId
+      || !providerResult.session.authenticationMethods.includes("recovery")
+    ) {
+      await this.expireRecoveryChallenge(initial.id, "provider_recovery_identity_mismatch");
+      throw new AuthServiceError("RECOVERY_LINK_INVALID", 401, false, "Ссылка для восстановления недействительна или устарела.");
+    }
+    const recoveryGrant = createOpaqueToken();
+    const recoveryGrantHash = await hashSecret(recoveryGrant);
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const now = await databaseNow(transaction);
+      const challenge = await findRecoveryChallenge(transaction, input.challengeId, true);
+      if (
+        challenge === null
+        || challenge.state !== "pending"
+        || challenge.expiresAt.getTime() <= now.getTime()
+        || !secretsEqual(challenge.stateVerifierHash, await hashSecret(input.stateVerifier))
+        || challenge.providerSubjectId !== providerResult.session.subjectId
+      ) throw new AuthServiceError("RECOVERY_LINK_INVALID", 401, false, "Ссылка для восстановления недействительна или устарела.");
+      await transaction.execute(sql`
+        UPDATE crm.auth_recovery_challenges
+        SET state = 'verified', recovery_grant_hash = ${recoveryGrantHash}::text, verified_at = clock_timestamp()
+        WHERE id = ${challenge.id}::uuid AND state = 'pending'
+      `);
+      await insertAudit(transaction, { actorEmployeeId: challenge.employeeId, action: "auth.password.recovery_verified", entityType: "employee", entityId: challenge.employeeId, reason: "pkce_recovery_verified" });
+    }));
+    return { recoveryGrant, redirectTo: this.options.recoveryCompleteUrl };
+  }
+
+  async resetPasswordWithRecoveryGrant(recoveryGrant: string, newPassword: string): Promise<void> {
+    const recoveryGrantHash = await hashSecret(recoveryGrant);
+    const challenge = await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const now = await databaseNow(transaction);
+      const result = await transaction.execute<RecoveryChallengeRow>(sql`
+        SELECT
+          challenge.id,
+          challenge.employee_id AS "employeeId",
+          challenge.employment_epoch_id AS "employmentEpochId",
+          challenge.auth_binding_id AS "authBindingId",
+          challenge.state_verifier_hash AS "stateVerifierHash",
+          challenge.code_verifier_ciphertext AS "codeVerifierCiphertext",
+          challenge.recovery_grant_hash AS "recoveryGrantHash",
+          challenge.state,
+          challenge.expires_at AS "expiresAt",
+          binding.provider_subject_id AS "providerSubjectId",
+          binding.provider_namespace AS "providerNamespace",
+          security.access_state AS "accessState",
+          security.credential_state AS "credentialState",
+          epoch.state AS "employmentState",
+          binding.state AS "bindingState"
+        FROM crm.auth_recovery_challenges AS challenge
+        JOIN crm.employee_security_states AS security ON security.employee_id = challenge.employee_id
+        JOIN crm.employment_epochs AS epoch ON epoch.id = challenge.employment_epoch_id
+        JOIN crm.auth_bindings AS binding ON binding.id = challenge.auth_binding_id
+        WHERE challenge.recovery_grant_hash = ${recoveryGrantHash}::text
+        LIMIT 1
+        FOR UPDATE OF challenge, security, epoch, binding
+      `);
+      const row = result.rows[0];
+      if (
+        row === undefined
+        || row.state !== "verified"
+        || row.recoveryGrantHash === null
+        || !secretsEqual(row.recoveryGrantHash, recoveryGrantHash)
+        || row.expiresAt.getTime() <= now.getTime()
+        || row.providerNamespace !== this.options.providerNamespace
+        || row.accessState !== "active"
+        || row.employmentState !== "active"
+        || row.bindingState !== "active"
+      ) throw new AuthServiceError("RECOVERY_GRANT_INVALID", 401, false, "Восстановление необходимо начать заново.");
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET credential_state = 'changing', session_epoch = session_epoch + 1,
+            updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${row.employeeId}::uuid AND employment_epoch_id = ${row.employmentEpochId}::uuid
+      `);
+      await transaction.execute(sql`
+        UPDATE crm.crm_sessions
+        SET status = 'revoked', revoked_at = clock_timestamp(), revoke_reason = 'recovery_password_change_pending',
+            updated_at = clock_timestamp(), revision = revision + 1
+        WHERE employee_id = ${row.employeeId}::uuid AND status = 'active'
+      `);
+      return row;
+    }));
+    const providerUpdated = await this.options.provider.updatePassword({ subjectId: challenge.providerSubjectId, password: newPassword });
+    if (providerUpdated !== "updated") {
+      await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+        await transaction.execute(sql`
+          UPDATE crm.employee_security_states
+          SET credential_state = 'reconciliation_required', updated_at = clock_timestamp(), version = version + 1
+          WHERE employee_id = ${challenge.employeeId}::uuid
+        `);
+        await transaction.execute(sql`
+          UPDATE crm.auth_recovery_challenges
+          SET state = 'quarantined', recovery_grant_hash = NULL
+          WHERE id = ${challenge.id}::uuid AND state = 'verified'
+        `);
+        await insertAudit(transaction, { actorEmployeeId: challenge.employeeId, action: "auth.password.recovery_reconciliation_required", entityType: "employee", entityId: challenge.employeeId, reason: "provider_update_ambiguous" });
+      }));
+      throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Пароль требует проверки безопасности. Обратитесь к руководителю.");
+    }
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET credential_state = 'ready', credential_epoch = credential_epoch + 1, session_epoch = session_epoch + 1,
+            login_failure_count = 0, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${challenge.employeeId}::uuid AND employment_epoch_id = ${challenge.employmentEpochId}::uuid
+      `);
+      await transaction.execute(sql`
+        UPDATE crm.auth_recovery_challenges
+        SET state = 'consumed', recovery_grant_hash = NULL, consumed_at = clock_timestamp()
+        WHERE id = ${challenge.id}::uuid AND state = 'verified'
+      `);
+      await insertAudit(transaction, { actorEmployeeId: challenge.employeeId, action: "auth.password.recovered", entityType: "employee", entityId: challenge.employeeId, reason: "recovery_grant_consumed" });
+    }));
+  }
+
+  async refreshSession(refreshToken: string): Promise<IssuedSession> {
+    const refreshTokenHash = await hashSecret(refreshToken);
+    const initial = await this.options.withDatabase(async (database) => {
+      const now = await databaseNow(database);
+      const row = await findSessionByHash(database, "refresh", refreshTokenHash);
+      if (row === null) throw new AuthServiceError("AUTHENTICATION_REQUIRED", 401, false, "Сессия завершена. Войдите снова.");
+      assertSessionUsable(row, now, row.credentialState === "ready" ? "crm_session" : "password_change", this.options.providerNamespace);
+      return row;
+    });
+    let providerRefreshToken: string;
+    try {
+      providerRefreshToken = await this.options.tokenCipher.decrypt(initial.providerRefreshTokenCiphertext);
+    } catch {
+      await this.revokeById(initial.id, "provider_token_unreadable");
+      throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+    }
+    const providerResult = await this.options.provider.refreshSession(providerRefreshToken);
+    if (providerResult.kind === "unavailable") throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Служба входа временно недоступна. Повторите попытку.");
+    if (providerResult.kind === "invalid_credentials" || providerResult.session.subjectId !== initial.providerSubjectId || !providerResult.session.authenticationMethods.includes("password")) {
+      await this.revokeById(initial.id, "provider_session_invalid");
+      throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+    }
+    return this.rotateLocalSession(initial.id, refreshTokenHash, providerResult.session);
+  }
+
+  private async reconcileProviderSession(accessTokenHash: string, route: "crm_session" | "password_change"): Promise<{ session: SessionRow; now: Date }> {
+    const initial = await this.options.withDatabase(async (database) => {
+      const now = await databaseNow(database);
+      const row = await findSessionByHash(database, "access", accessTokenHash);
+      if (row === null) throw new AuthServiceError("AUTHENTICATION_REQUIRED", 401, false, "Требуется действующая сессия CRM.");
+      assertSessionUsable(row, now, route, this.options.providerNamespace);
+      return { row, now };
+    });
+    let providerRefreshToken: string;
+    try {
+      providerRefreshToken = await this.options.tokenCipher.decrypt(initial.row.providerRefreshTokenCiphertext);
+    } catch {
+      await this.revokeById(initial.row.id, "provider_token_unreadable");
+      throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+    }
+    const providerResult = await this.options.provider.refreshSession(providerRefreshToken);
+    if (providerResult.kind === "unavailable") {
+      // A previously reconciled session stays usable only until the 30-minute deadline.
+      if (initial.row.providerReconciledAt !== null && initial.now.getTime() - initial.row.providerReconciledAt.getTime() < providerReconciliationWindowMs) return { session: initial.row, now: initial.now };
+      throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Не удалось подтвердить активность сессии у провайдера.");
+    }
+    if (providerResult.kind === "invalid_credentials" || providerResult.session.subjectId !== initial.row.providerSubjectId || !providerResult.session.authenticationMethods.includes("password")) {
+      await this.revokeById(initial.row.id, "provider_session_invalid");
+      throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+    }
+    const cipher = await this.options.tokenCipher.encrypt(providerResult.session.refreshToken);
+    return this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const now = await databaseNow(transaction);
+      const row = await findSessionByHash(transaction, "access", accessTokenHash, true);
+      if (row === null) throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+      assertSessionUsable(row, now, route, this.options.providerNamespace);
+      await transaction.execute(sql`
+        UPDATE crm.crm_sessions
+        SET provider_session_id = ${providerResult.session.sessionId}::uuid,
+            provider_refresh_token_ciphertext = ${cipher}::text,
+            provider_reconciled_at = clock_timestamp(), updated_at = clock_timestamp(), revision = revision + 1
+        WHERE id = ${row.id}::uuid AND revision = ${row.revision}::integer
+      `);
+      const refreshed = await findSessionByHash(transaction, "access", accessTokenHash, true);
+      if (refreshed === null) throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+      assertSessionUsable(refreshed, now, route, this.options.providerNamespace);
+      return { session: refreshed, now };
+    }));
+  }
+
+  private async rotateLocalSession(sessionId: string, refreshTokenHash: string, providerSession: ProviderSession): Promise<IssuedSession> {
+    const accessToken = createOpaqueToken();
+    const refreshToken = createOpaqueToken();
+    const accessTokenHash = await hashSecret(accessToken);
+    const nextRefreshHash = await hashSecret(refreshToken);
+    const cipher = await this.options.tokenCipher.encrypt(providerSession.refreshToken);
+    return this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const now = await databaseNow(transaction);
+      const row = await findSessionByHash(transaction, "refresh", refreshTokenHash, true);
+      if (row === null || row.id !== sessionId) throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+      assertSessionUsable(row, now, row.credentialState === "ready" ? "crm_session" : "password_change", this.options.providerNamespace);
+      const updated = await transaction.execute<Pick<SessionRow, "revision" | "lastInteractiveAt" | "idleExpiresAt" | "absoluteExpiresAt">>(sql`
+        UPDATE crm.crm_sessions
+        SET access_token_hash = ${accessTokenHash}::text,
+            refresh_token_hash = ${nextRefreshHash}::text,
+            provider_session_id = ${providerSession.sessionId}::uuid,
+            provider_refresh_token_ciphertext = ${cipher}::text,
+            provider_reconciled_at = clock_timestamp(), refresh_generation = refresh_generation + 1,
+            updated_at = clock_timestamp(), revision = revision + 1
+        WHERE id = ${row.id}::uuid
+          AND refresh_token_hash = ${refreshTokenHash}::text
+          AND revision = ${row.revision}::integer
+        RETURNING revision, last_interactive_at AS "lastInteractiveAt", idle_expires_at AS "idleExpiresAt", absolute_expires_at AS "absoluteExpiresAt"
+      `);
+      const fields = updated.rows[0];
+      if (fields === undefined) throw new AuthServiceError("SESSION_EXPIRED", 401, false, "Сессия завершена. Войдите снова.");
+      const completed = { ...row, ...fields, accessTokenHash, refreshTokenHash: nextRefreshHash, providerRefreshTokenCiphertext: cipher, providerSessionId: providerSession.sessionId, providerReconciledAt: now };
+      return {
+        accessToken,
+        accessTokenExpiresAt: completed.idleExpiresAt.toISOString(),
+        refreshToken,
+        session: toAuthSession(completed, now),
+      };
+    }));
+  }
+
+  private async recordInvalidPasswordAttempt(attemptId: string, canonicalLogin: string, employeeId: string): Promise<void> {
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const now = await databaseNow(transaction);
+      const identity = await findIdentityForLogin(transaction, canonicalLogin, true);
+      if (identity === null || identity.employeeId !== employeeId) return;
+      const duplicate = !(await insertAttempt(transaction, { id: attemptId, canonicalLogin, employeeId, outcome: "invalid_credentials", providerAttempted: true }));
+      if (duplicate) return;
+      if (identity.loginLockedUntil !== null && identity.loginLockedUntil.getTime() > now.getTime()) {
+        await transaction.execute(sql`UPDATE crm.auth_login_attempts SET outcome = 'locked' WHERE id = ${attemptId}::uuid`);
+        await insertAudit(transaction, { actorEmployeeId: employeeId, action: "auth.login.locked", entityType: "authLoginAttempt", entityId: attemptId, reason: "concurrent_lock" });
+        return;
+      }
+      const count = Math.min((identity.loginFailureCount ?? 0) + 1, 5);
+      const locked = count >= 5;
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET login_failure_count = ${count}::integer,
+            login_locked_until = CASE WHEN ${locked}::boolean THEN clock_timestamp() + interval '15 minutes' ELSE NULL END,
+            updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${employeeId}::uuid
+      `);
+      await insertAudit(transaction, {
+        actorEmployeeId: employeeId,
+        action: locked ? "auth.login.locked" : "auth.login.failed",
+        entityType: "authLoginAttempt",
+        entityId: attemptId,
+        reason: locked ? "five_invalid_credentials" : "invalid_credentials",
+        after: { failureCount: count },
+      });
+    }));
+  }
+
+  private async recordAttempt(attemptId: string, canonicalLogin: string, employeeId: string | null, outcome: string, providerAttempted: boolean, action: string): Promise<void> {
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const inserted = await insertAttempt(transaction, { id: attemptId, canonicalLogin, employeeId, outcome, providerAttempted });
+      if (inserted) await insertAudit(transaction, { actorEmployeeId: employeeId, action, entityType: "authLoginAttempt", entityId: attemptId, reason: outcome });
+    }));
+  }
+
+  private async quarantineIdentity(employeeId: string, attemptId: string, reason: string): Promise<void> {
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET access_state = 'security_quarantined', session_epoch = session_epoch + 1,
+            updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${employeeId}::uuid
+      `);
+      await transaction.execute(sql`
+        UPDATE crm.crm_sessions
+        SET status = 'revoked', revoked_at = clock_timestamp(), revoke_reason = ${reason}::text,
+            updated_at = clock_timestamp(), revision = revision + 1
+        WHERE employee_id = ${employeeId}::uuid AND status = 'active'
+      `);
+      await insertAudit(transaction, { actorEmployeeId: employeeId, action: "auth.identity.quarantined", entityType: "authLoginAttempt", entityId: attemptId, reason });
+    }));
+  }
+
+  private async revokeById(sessionId: string, reason: string): Promise<void> {
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const updated = await transaction.execute<{ employeeId: string }>(sql`
+        UPDATE crm.crm_sessions
+        SET status = 'revoked', revoked_at = clock_timestamp(), revoke_reason = ${reason}::text,
+            updated_at = clock_timestamp(), revision = revision + 1
+        WHERE id = ${sessionId}::uuid AND status = 'active'
+        RETURNING employee_id AS "employeeId"
+      `);
+      const row = updated.rows[0];
+      if (row !== undefined) await insertAudit(transaction, { actorEmployeeId: row.employeeId, action: "auth.session.revoked", entityType: "crmSession", entityId: sessionId, reason });
+    }));
+  }
+
+  private async expireRecoveryChallenge(challengeId: string, reason: string): Promise<void> {
+    await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
+      const updated = await transaction.execute<{ employeeId: string }>(sql`
+        UPDATE crm.auth_recovery_challenges
+        SET state = 'expired', recovery_grant_hash = NULL
+        WHERE id = ${challengeId}::uuid AND state IN ('pending', 'verified')
+        RETURNING employee_id AS "employeeId"
+      `);
+      const row = updated.rows[0];
+      if (row !== undefined) await insertAudit(transaction, { actorEmployeeId: row.employeeId, action: "auth.password.recovery_expired", entityType: "employee", entityId: row.employeeId, reason });
+    }));
+  }
+}

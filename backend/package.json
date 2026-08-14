@@ -1,0 +1,36 @@
+{
+  "name": "@inmotion-crm/backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "wrangler deploy --dry-run",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types",
+    "types:check": "wrangler types --check",
+    "test": "vitest run",
+    "db:migrate": "bun scripts/migrate.ts",
+    "test:db": "bun scripts/require-test-database.ts && vitest run --config vitest.db.config.ts tests/database.integration.test.ts tests/integrity.integration.test.ts",
+    "test:db:performance": "bun scripts/require-test-database.ts && vitest run --config vitest.db.config.ts tests/database.performance.test.ts",
+    "auth:bootstrap-initial-leader": "bun scripts/bootstrap-initial-leader.ts",
+    "db:schema:check": "drizzle-kit check --config drizzle.config.ts && bun scripts/check-schema.ts",
+    "hyperdrive:preflight": "bun scripts/hyperdrive-preflight.ts"
+  },
+  "dependencies": {
+    "@hono/zod-openapi": "1.5.1",
+    "@inmotion-crm/contracts": "workspace:*",
+    "drizzle-orm": "0.44.7",
+    "hono": "4.12.31",
+    "pg": "8.16.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.20.2",
+    "@types/pg": "8.15.5",
+    "drizzle-kit": "0.31.7",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10",
+    "wrangler": "4.119.0"
+  }
+}

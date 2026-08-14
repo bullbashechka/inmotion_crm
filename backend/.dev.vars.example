@@ -1,0 +1,17 @@
+# Локальные значения без секретов. Не добавляйте в этот файл production-данные.
+APP_ENV=local
+APP_BUILD_VERSION=dev
+SUPPORTED_CLIENT_VERSIONS=dev
+CORS_ORIGINS=http://localhost:5173
+# All six values must be set together to enable the Auth BFF. Keep real values
+# only in ignored backend/.dev.vars or Worker secrets, never in wrangler.jsonc.
+# SUPABASE_URL=https://project.supabase.co
+# SUPABASE_ANON_KEY=
+# SUPABASE_SERVICE_ROLE_KEY=
+# AUTH_PROVIDER_NAMESPACE=supabase:project
+# AUTH_TOKEN_ENCRYPTION_KEY=base64url-encoded-32-byte-key
+# AUTH_RECOVERY_CALLBACK_URL=http://localhost:8787/api/v1/auth/recovery/callback
+# AUTH_RECOVERY_COMPLETE_URL=http://localhost:5173/recovery/reset
+# Set this only in your local shell or an ignored backend/.dev.vars file.
+# It must point at an isolated development database; do not put credentials in wrangler.jsonc.
+# CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE_FRESH=postgres://crm_runtime:password@localhost:5432/inmotion_crm
