@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  canonicalizeEmail,
   canonicalizeLogin,
+  canonicalizeUsername,
   createAuthTokenCipher,
   createOpaqueToken,
   hashSecret,
@@ -28,10 +30,12 @@ describe("auth secret primitives", () => {
     await expect(cipher.decrypt(`${encrypted}x`)).rejects.toThrow();
   });
 
-  test("canonicalizes only ASCII email-shaped logins without provider-specific rewriting", () => {
-    expect(canonicalizeLogin("  First.Last+test@Example.COM ")).toBe("first.last+test@example.com");
+  test("keeps provider email canonicalization separate from CRM usernames", () => {
+    expect(canonicalizeEmail("  First.Last+test@Example.COM ")).toBe("first.last+test@example.com");
     expect(canonicalizeLogin("doctor@example")).toBeNull();
-    expect(canonicalizeLogin("доктор@example.com")).toBeNull();
-    expect(canonicalizeLogin(" ")).toBeNull();
+    expect(canonicalizeUsername("  Nurpeisova.A  ")).toBe("nurpeisova.a");
+    expect(canonicalizeUsername("doctor@example.com")).toBeNull();
+    expect(canonicalizeUsername("доктор")).toBeNull();
+    expect(canonicalizeUsername("ab")).toBeNull();
   });
 });

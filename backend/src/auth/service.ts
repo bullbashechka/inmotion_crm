@@ -4,7 +4,7 @@ import type { AuthSession, AuthSessionState } from "@inmotion-crm/contracts";
 
 import type { RequestDatabase } from "../db/integrity";
 import { createUuidV7 } from "../db/uuidv7";
-import { canonicalizeLogin, createOpaqueToken, createPkceChallenge, hashSecret, secretsEqual, type AuthTokenCipher } from "./crypto";
+import { canonicalizeUsername, createOpaqueToken, createPkceChallenge, hashSecret, secretsEqual, type AuthTokenCipher } from "./crypto";
 import type { AuthProvider, ProviderSession } from "./provider";
 
 const idleWindowMs = 30 * 60 * 1000;
@@ -22,7 +22,9 @@ type IdentityRow = {
   employmentState: string;
   accessState: string | null;
   credentialState: string | null;
+  temporaryPasswordExpiresAt: Date | null;
   loginFailureCount: number | null;
+  loginFailureWindowStartedAt: Date | null;
   loginLockedUntil: Date | null;
   sessionEpoch: number | null;
   credentialEpoch: number | null;
@@ -30,6 +32,7 @@ type IdentityRow = {
   providerSubjectId: string | null;
   providerNamespace: string | null;
   bindingState: string | null;
+  recoveryEmail: string;
 };
 
 type SessionRow = {
@@ -147,6 +150,7 @@ function isActiveIdentity(identity: IdentityRow, now: Date): boolean {
   return identity.employmentState === "active"
     && identity.accessState === "active"
     && (identity.credentialState === "ready" || identity.credentialState === "temporary_password" || identity.credentialState === "password_change_required")
+    && (identity.credentialState !== "temporary_password" || (identity.temporaryPasswordExpiresAt !== null && identity.temporaryPasswordExpiresAt.getTime() > now.getTime()))
     && identity.bindingState === "active"
     && identity.employmentEpochId !== null
     && identity.bindingId !== null
@@ -158,8 +162,9 @@ function genericSignInError(): AuthServiceError {
   return new AuthServiceError("INVALID_CREDENTIALS", 401, false, "Неверный логин или пароль.");
 }
 
-function lockError(): AuthServiceError {
-  return new AuthServiceError("LOGIN_LOCKED", 423, false, "Вход временно заблокирован. Повторите попытку позже.");
+function lockError(lockedUntil: Date, serverNow: Date): AuthServiceError {
+  const minutes = Math.max(1, Math.ceil((lockedUntil.getTime() - serverNow.getTime()) / 60_000));
+  return new AuthServiceError("LOGIN_LOCKED", 423, false, `Вход временно заблокирован. Повторите через ${minutes} мин.`);
 }
 
 async function insertAttempt(
@@ -211,14 +216,17 @@ async function findIdentityForLogin(database: RequestDatabase, canonicalLogin: s
       epoch.state AS "employmentState",
       security.access_state AS "accessState",
       security.credential_state AS "credentialState",
+      security.temporary_password_expires_at AS "temporaryPasswordExpiresAt",
       security.login_failure_count AS "loginFailureCount",
+      security.login_failure_window_started_at AS "loginFailureWindowStartedAt",
       security.login_locked_until AS "loginLockedUntil",
       security.session_epoch AS "sessionEpoch",
       security.credential_epoch AS "credentialEpoch",
       binding.id AS "bindingId",
       binding.provider_subject_id AS "providerSubjectId",
       binding.provider_namespace AS "providerNamespace",
-      binding.state AS "bindingState"
+      binding.state AS "bindingState",
+      employee.recovery_email AS "recoveryEmail"
     FROM crm.login_claims AS claim
     JOIN crm.employment_epochs AS epoch ON epoch.id = claim.employment_epoch_id
     JOIN crm.employees AS employee ON employee.id = epoch.employee_id
@@ -327,8 +335,8 @@ function assertSessionUsable(row: SessionRow, now: Date, route: "crm_session" | 
   }
 }
 
-function assertProviderSessionMatches(identity: IdentityRow, providerSession: ProviderSession, expectedLogin: string): void {
-  if (identity.providerSubjectId !== providerSession.subjectId || providerSession.login !== expectedLogin || !providerSession.authenticationMethods.includes("password")) {
+function assertProviderSessionMatches(identity: IdentityRow, providerSession: ProviderSession, expectedRecoveryEmail: string): void {
+  if (identity.providerSubjectId !== providerSession.subjectId || providerSession.login !== expectedRecoveryEmail || !providerSession.authenticationMethods.includes("password")) {
     throw new AuthServiceError("IDENTITY_RECONCILIATION_REQUIRED", 409, false, "Учётная запись требует проверки безопасности.");
   }
 }
@@ -337,7 +345,7 @@ export class AuthService {
   constructor(private readonly options: AuthServiceOptions) {}
 
   async signIn(input: { login: string; password: string; attemptId: string }): Promise<IssuedSession> {
-    const canonicalLogin = canonicalizeLogin(input.login);
+    const canonicalLogin = canonicalizeUsername(input.login);
     if (canonicalLogin === null || !isUuid(input.attemptId)) {
       throw genericSignInError();
     }
@@ -352,8 +360,8 @@ export class AuthService {
       }
       if (identity.loginLockedUntil !== null && identity.loginLockedUntil.getTime() <= now.getTime()) {
         await transaction.execute(sql`
-          UPDATE crm.employee_security_states
-          SET login_failure_count = 0, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
+        UPDATE crm.employee_security_states
+          SET login_failure_count = 0, login_failure_window_started_at = NULL, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
           WHERE employee_id = ${identity.employeeId}::uuid
         `);
         identity.loginFailureCount = 0;
@@ -362,7 +370,7 @@ export class AuthService {
       if (identity.loginLockedUntil !== null && identity.loginLockedUntil.getTime() > now.getTime()) {
         const inserted = await insertAttempt(transaction, { id: input.attemptId, canonicalLogin, employeeId: identity.employeeId, outcome: "locked", providerAttempted: false });
         if (inserted) await insertAudit(transaction, { actorEmployeeId: identity.employeeId, action: "auth.login.locked", entityType: "authLoginAttempt", entityId: input.attemptId, reason: "lock_active" });
-        return { kind: "locked" as const };
+        return { kind: "locked" as const, lockedUntil: identity.loginLockedUntil, now };
       }
       if (!isActiveIdentity(identity, now) || identity.providerNamespace !== this.options.providerNamespace) {
         const inserted = await insertAttempt(transaction, { id: input.attemptId, canonicalLogin, employeeId: identity.employeeId, outcome: "inactive", providerAttempted: false });
@@ -372,10 +380,10 @@ export class AuthService {
       return { kind: "eligible" as const, identity };
     }));
 
-    if (preflight.kind === "locked") throw lockError();
+    if (preflight.kind === "locked") throw lockError(preflight.lockedUntil, preflight.now);
     if (preflight.kind === "invalid") throw genericSignInError();
 
-    const providerResult = await this.options.provider.signInWithPassword({ login: canonicalLogin, password: input.password });
+    const providerResult = await this.options.provider.signInWithPassword({ login: preflight.identity.recoveryEmail, password: input.password });
     if (providerResult.kind === "unavailable") {
       await this.recordAttempt(input.attemptId, canonicalLogin, preflight.identity.employeeId, "provider_unavailable", true, "auth.login.provider_unavailable");
       throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Служба входа временно недоступна. Повторите попытку.");
@@ -386,7 +394,7 @@ export class AuthService {
     }
 
     try {
-      assertProviderSessionMatches(preflight.identity, providerResult.session, canonicalLogin);
+      assertProviderSessionMatches(preflight.identity, providerResult.session, preflight.identity.recoveryEmail);
     } catch (error) {
       await this.quarantineIdentity(preflight.identity.employeeId, input.attemptId, "provider_identity_mismatch");
       void this.options.provider.banUser(providerResult.session.subjectId);
@@ -407,7 +415,7 @@ export class AuthService {
         throw genericSignInError();
       }
       try {
-        assertProviderSessionMatches(identity, providerResult.session, canonicalLogin);
+        assertProviderSessionMatches(identity, providerResult.session, identity.recoveryEmail);
       } catch (error) {
         await transaction.execute(sql`
           UPDATE crm.employee_security_states
@@ -421,7 +429,7 @@ export class AuthService {
       }
       await transaction.execute(sql`
         UPDATE crm.employee_security_states
-        SET login_failure_count = 0, login_locked_until = NULL,
+        SET login_failure_count = 0, login_failure_window_started_at = NULL, login_locked_until = NULL,
             updated_at = clock_timestamp(), version = version + 1
         WHERE employee_id = ${identity.employeeId}::uuid
           AND employment_epoch_id = ${identity.employmentEpochId}::uuid
@@ -560,9 +568,10 @@ export class AuthService {
   async changePassword(accessToken: string, input: { currentPassword: string; newPassword: string }): Promise<void> {
     const authenticated = await this.authenticate(accessToken, "password_change");
     const login = await this.options.withDatabase(async (database) => {
-      const result = await database.execute<{ canonicalLogin: string; providerSubjectId: string }>(sql`
-        SELECT claim.canonical_login AS "canonicalLogin", binding.provider_subject_id AS "providerSubjectId"
+      const result = await database.execute<{ recoveryEmail: string; providerSubjectId: string }>(sql`
+        SELECT employee.recovery_email AS "recoveryEmail", binding.provider_subject_id AS "providerSubjectId"
         FROM crm.login_claims AS claim
+        JOIN crm.employees AS employee ON employee.id = claim.employee_id
         JOIN crm.auth_bindings AS binding ON binding.employment_epoch_id = claim.employment_epoch_id
         WHERE claim.employment_epoch_id = ${authenticated.employmentEpochId}::uuid
           AND claim.state = 'active'
@@ -573,7 +582,7 @@ export class AuthService {
       if (row === undefined) throw new AuthServiceError("IDENTITY_RECONCILIATION_REQUIRED", 409, false, "Учётная запись требует проверки безопасности.");
       return row;
     });
-    const verification = await this.options.provider.signInWithPassword({ login: login.canonicalLogin, password: input.currentPassword });
+    const verification = await this.options.provider.signInWithPassword({ login: login.recoveryEmail, password: input.currentPassword });
     if (verification.kind === "unavailable") throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Служба входа временно недоступна. Повторите попытку.");
     if (verification.kind === "invalid_credentials" || verification.session.subjectId !== login.providerSubjectId || !verification.session.authenticationMethods.includes("password")) {
       throw genericSignInError();
@@ -610,8 +619,8 @@ export class AuthService {
     await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
       await transaction.execute(sql`
         UPDATE crm.employee_security_states
-        SET credential_state = 'ready', credential_epoch = credential_epoch + 1, session_epoch = session_epoch + 1,
-            login_failure_count = 0, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
+        SET credential_state = 'ready', temporary_password_expires_at = NULL, credential_epoch = credential_epoch + 1, session_epoch = session_epoch + 1,
+            login_failure_count = 0, login_failure_window_started_at = NULL, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
         WHERE employee_id = ${authenticated.employeeId}::uuid
           AND employment_epoch_id = ${authenticated.employmentEpochId}::uuid
       `);
@@ -627,7 +636,7 @@ export class AuthService {
 
   /** Enumeration-safe request; only a known active identity reaches the provider. */
   async requestPasswordRecovery(login: string): Promise<void> {
-    const canonicalLogin = canonicalizeLogin(login);
+    const canonicalLogin = canonicalizeUsername(login);
     if (canonicalLogin === null) return;
     const identity = await this.options.withDatabase(async (database) => {
       const now = await databaseNow(database);
@@ -659,11 +668,11 @@ export class AuthService {
         ) VALUES (
           ${challengeId}::uuid, ${identity.employeeId}::uuid, ${identity.employmentEpochId}::uuid,
           ${identity.bindingId}::uuid, ${stateVerifierHash}::text,
-          ${codeVerifierCiphertext}::text, clock_timestamp() + interval '15 minutes'
+          ${codeVerifierCiphertext}::text, clock_timestamp() + interval '30 minutes'
         )
       `);
     }));
-    const outcome = await this.options.provider.sendPasswordRecovery({ login: canonicalLogin, redirectTo: redirectTo.toString(), codeChallenge });
+    const outcome = await this.options.provider.sendPasswordRecovery({ login: identity.recoveryEmail, redirectTo: redirectTo.toString(), codeChallenge });
     if (outcome === "unavailable") throw new AuthServiceError("AUTH_PROVIDER_UNAVAILABLE", 503, true, "Служба восстановления временно недоступна. Повторите попытку.");
     await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
       await insertAudit(transaction, { actorEmployeeId: identity.employeeId, action: "auth.password.recovery_requested", entityType: "employee", entityId: identity.employeeId, reason: "bff_recovery_request" });
@@ -804,8 +813,8 @@ export class AuthService {
     await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
       await transaction.execute(sql`
         UPDATE crm.employee_security_states
-        SET credential_state = 'ready', credential_epoch = credential_epoch + 1, session_epoch = session_epoch + 1,
-            login_failure_count = 0, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
+        SET credential_state = 'ready', temporary_password_expires_at = NULL, credential_epoch = credential_epoch + 1, session_epoch = session_epoch + 1,
+            login_failure_count = 0, login_failure_window_started_at = NULL, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
         WHERE employee_id = ${challenge.employeeId}::uuid AND employment_epoch_id = ${challenge.employmentEpochId}::uuid
       `);
       await transaction.execute(sql`
@@ -935,11 +944,17 @@ export class AuthService {
         await insertAudit(transaction, { actorEmployeeId: employeeId, action: "auth.login.locked", entityType: "authLoginAttempt", entityId: attemptId, reason: "concurrent_lock" });
         return;
       }
-      const count = Math.min((identity.loginFailureCount ?? 0) + 1, 5);
+      const windowStartedAt = identity.loginFailureWindowStartedAt;
+      const inCurrentWindow = windowStartedAt !== null && now.getTime() - windowStartedAt.getTime() < 15 * 60 * 1000;
+      const count = Math.min(inCurrentWindow ? (identity.loginFailureCount ?? 0) + 1 : 1, 5);
       const locked = count >= 5;
       await transaction.execute(sql`
         UPDATE crm.employee_security_states
         SET login_failure_count = ${count}::integer,
+            login_failure_window_started_at = CASE
+              WHEN ${inCurrentWindow}::boolean THEN login_failure_window_started_at
+              ELSE clock_timestamp()
+            END,
             login_locked_until = CASE WHEN ${locked}::boolean THEN clock_timestamp() + interval '15 minutes' ELSE NULL END,
             updated_at = clock_timestamp(), version = version + 1
         WHERE employee_id = ${employeeId}::uuid

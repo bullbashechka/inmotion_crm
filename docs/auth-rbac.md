@@ -4,6 +4,11 @@ Task 004 uses Supabase Auth only as the credential provider. CRM PostgreSQL rows
 remain the source of truth for employee state, employment epoch, roles,
 permissions, overrides, lockouts and CRM sessions.
 
+Employees enter a separately assigned CRM username. Supabase receives only the
+recovery email as its credential identifier; the email is never treated as the
+visible CRM login. Recovery links are valid for 30 minutes, and temporary
+passwords are single-use and expire after 72 hours.
+
 ## Deployment requirements
 
 The Worker needs these values together; a partial Auth configuration is rejected:

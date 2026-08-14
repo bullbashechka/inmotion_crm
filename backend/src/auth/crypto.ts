@@ -74,8 +74,8 @@ export async function createAuthTokenCipher(encodedKey: string): Promise<AuthTok
   };
 }
 
-/** The product treats login as an ASCII email-shaped credential, not a contact email. */
-export function canonicalizeLogin(value: string): string | null {
+/** A provider email is never used as the employee's visible CRM login. */
+export function canonicalizeEmail(value: string): string | null {
   const canonical = value.trim().toLowerCase();
   if (canonical.length === 0 || canonical.length > 320 || /[^\x21-\x7e]/u.test(canonical)) return null;
   const at = canonical.lastIndexOf("@");
@@ -86,3 +86,17 @@ export function canonicalizeLogin(value: string): string | null {
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u.test(domain)) return null;
   return canonical;
 }
+
+/**
+ * CRM logins are deliberately short, memorable usernames. They never contain
+ * an email separator, which prevents accidental exposure of the recovery
+ * address on a shared sign-in screen.
+ */
+export function canonicalizeUsername(value: string): string | null {
+  const canonical = value.trim().toLowerCase();
+  if (canonical.length < 3 || canonical.length > 64) return null;
+  return /^[a-z0-9](?:[a-z0-9._-]{1,62}[a-z0-9])?$/u.test(canonical) ? canonical : null;
+}
+
+/** @deprecated Use canonicalizeEmail or canonicalizeUsername explicitly. */
+export const canonicalizeLogin = canonicalizeEmail;

@@ -63,6 +63,11 @@ export class RoleService {
         RETURNING id
       `);
       if (inserted.rows[0] === undefined) throw new RoleServiceError("ROLE_CONFLICT", 409, "Эта роль уже назначена сотруднику.");
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET authorization_revision = authorization_revision + 1, updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${input.employeeId}::uuid
+      `);
       await writeAudit(transaction, actor, "employee.role.assigned", "roleAssignment", inserted.rows[0].id, input.reason.trim(), { employeeId: input.employeeId, roleId: input.roleId });
     }));
   }
@@ -87,19 +92,37 @@ export class RoleService {
       if (current.systemKind === "leader" && !(await this.accessControl.isLeader(transaction, actor))) {
         throw new AuthorizationError("ROLE_ASSIGNMENT_DENIED", "Только руководитель может менять роль руководителя.");
       }
+      const remaining = await transaction.execute<{ count: string }>(sql`
+        SELECT count(*) FROM crm.role_assignments
+        WHERE employee_id = ${input.employeeId}::uuid
+          AND employment_epoch_id = (SELECT employment_epoch_id FROM crm.employee_security_states WHERE employee_id = ${input.employeeId}::uuid)::uuid
+          AND revoked_at IS NULL
+      `);
+      if (Number(remaining.rows[0]?.count ?? "0") <= 1) {
+        throw new RoleServiceError("ROLE_CONFLICT", 409, "Нельзя отозвать последнюю роль у активного сотрудника. Сначала назначьте другую роль или приостановите аккаунт.");
+      }
       await transaction.execute(sql`
         UPDATE crm.role_assignments
         SET revoked_at = clock_timestamp(), version = version + 1
         WHERE id = ${current.id}::uuid AND revoked_at IS NULL
       `);
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET authorization_revision = authorization_revision + 1, updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${input.employeeId}::uuid
+      `);
       await writeAudit(transaction, actor, "employee.role.revoked", "roleAssignment", current.id, input.reason.trim(), { employeeId: input.employeeId, roleId: input.roleId });
     }));
   }
 
-  async setEmployeePermissionOverride(actor: Actor, input: { employeeId: string; permissionCode: string; mode: "replace" | "deny"; scope?: unknown; reason: string }): Promise<void> {
+  async setEmployeePermissionOverride(actor: Actor, input: { employeeId: string; permissionCode: string; mode: "replace" | "deny"; scope?: unknown; expiresAt?: string; reason: string }): Promise<void> {
     if (actor.employeeId === input.employeeId) throw new AuthorizationError("SELF_ESCALATION_DENIED", "Нельзя изменять собственные роли или права.");
     if (input.reason.trim() === "" || (input.mode === "replace" && parseRecordScope(input.scope) === null) || (input.mode === "deny" && input.scope !== undefined)) {
       throw new RoleServiceError("INVALID_PERMISSION_SCOPE", 422, "Некорректное индивидуальное исключение.");
+    }
+    const expiresAt = input.expiresAt === undefined ? null : new Date(input.expiresAt);
+    if (expiresAt !== null && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) {
+      throw new RoleServiceError("INVALID_PERMISSION_SCOPE", 422, "Срок индивидуального исключения должен быть в будущем.");
     }
     await this.withDatabase(async (database) => database.transaction(async (transaction) => {
       // Individual exceptions always affect privileges, therefore are leader-only.
@@ -125,12 +148,12 @@ export class RoleService {
       if (existing.rows[0] === undefined) {
         await transaction.execute(sql`
           INSERT INTO crm.employee_permission_overrides (
-            id, employee_id, employment_epoch_id, permission_code, mode, scope, granted_by_employee_id, reason
+            id, employee_id, employment_epoch_id, permission_code, mode, scope, granted_by_employee_id, reason, expires_at
           ) VALUES (
             ${id}::uuid, ${input.employeeId}::uuid, ${target.employmentEpochId}::uuid,
             ${input.permissionCode}::text, ${input.mode}::text,
             ${input.mode === "deny" ? null : JSON.stringify(input.scope)}::jsonb,
-            ${actor.employeeId}::uuid, ${input.reason.trim()}::text
+            ${actor.employeeId}::uuid, ${input.reason.trim()}::text, ${expiresAt}::timestamptz
           )
         `);
       } else {
@@ -140,10 +163,16 @@ export class RoleService {
               scope = ${input.mode === "deny" ? null : JSON.stringify(input.scope)}::jsonb,
               granted_by_employee_id = ${actor.employeeId}::uuid,
               reason = ${input.reason.trim()}::text,
+              expires_at = ${expiresAt}::timestamptz,
               version = version + 1
           WHERE id = ${id}::uuid
         `);
       }
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states
+        SET authorization_revision = authorization_revision + 1, updated_at = clock_timestamp(), version = version + 1
+        WHERE employee_id = ${input.employeeId}::uuid
+      `);
       await writeAudit(transaction, actor, "employee.permission.override_set", "employeePermissionOverride", id, input.reason.trim(), { employeeId: input.employeeId, permissionCode: input.permissionCode, mode: input.mode });
     }));
   }
@@ -198,6 +227,15 @@ export class RoleService {
         SET current_revision_id = ${revisionId}::uuid, authorization_revision = authorization_revision + 1,
             updated_at = clock_timestamp(), version = version + 1
         WHERE id = ${input.roleId}::uuid AND version = ${input.expectedVersion}::integer
+      `);
+      await transaction.execute(sql`
+        UPDATE crm.employee_security_states AS security
+        SET authorization_revision = authorization_revision + 1, updated_at = clock_timestamp(), version = version + 1
+        FROM crm.role_assignments AS assignment
+        WHERE assignment.role_id = ${input.roleId}::uuid
+          AND assignment.revoked_at IS NULL
+          AND assignment.employee_id = security.employee_id
+          AND assignment.employment_epoch_id = security.employment_epoch_id
       `);
       await writeAudit(transaction, actor, "role.revision.published", "role", input.roleId, input.reason.trim(), { revisionId, permissionCount: canonicalGrants.length });
     }));

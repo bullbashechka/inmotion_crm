@@ -36,7 +36,11 @@ export function registerRoute<
   handler: RouteHandler<Route, { Variables: RoutePolicyVariables }>,
 ): void {
   const method = route.method.toUpperCase() as "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  app.on(method, route.path, async (context, next) => {
+  // OpenAPI paths use `{employeeId}`, while Hono's middleware matcher uses
+  // `:employeeId`. Without this conversion parameterized routes would skip
+  // the guard and reach the handler without an authenticated context.
+  const middlewarePath = route.path.replace(/\{([^}]+)\}/gu, ":$1");
+  app.on(method, middlewarePath, async (context, next) => {
     context.set("routeAccess", policy.access);
 
     if ((policy.requiresOrigin ?? unsafeMethods.has(context.req.method)) && unsafeMethods.has(context.req.method)) {

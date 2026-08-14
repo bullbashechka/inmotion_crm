@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { AppEnvironment, SystemHealthResponse } from "@inmotion-crm/contracts";
 
 import { EnvironmentBanner } from "./components/environment-banner";
+import { EmployeeAccessScreen } from "./components/employee-access-screen";
 import { LoginForm } from "./components/login-form";
 import { PasswordChangeForm } from "./components/password-change-form";
 import { RecoveryResetForm } from "./components/recovery-reset-form";
@@ -169,24 +170,28 @@ export function App({ clientEnvironment, loadHealth, authClient }: AppProps) {
     if (recoveryResetRoute) return <RecoveryResetForm busy={authBusy} completed={recoveryCompleted} error={authError} onSubmit={resetRecoveredPassword} />;
     if (passwordChangeRequired) return <PasswordChangeForm busy={authBusy} error={authError} onSubmit={changePassword} />;
     if (session === null) return <LoginForm busy={authBusy} error={authError} onRecovery={requestRecovery} onSubmit={signIn} />;
-    return (
-      <section className="mt-8 space-y-4" aria-label="Сессия CRM">
-        {isSessionWarning ? (
-          <Alert role="alert">
-            Сессия завершится в {Math.max(0, Math.ceil((new Date(session.idleExpiresAt).getTime() - now) / 60_000))} мин. Несохранённые изменения не будут отправлены после завершения. {" "}
-            <button className="ml-1 font-semibold underline underline-offset-4" disabled={authBusy} onClick={() => void continueSession()} type="button">Продолжить работу</button>
-          </Alert>
-        ) : null}
-        {authError !== null ? <Alert role="alert">{authError}</Alert> : null}
-        <p className="text-sm text-muted">Безопасная сессия активна. Access-токен хранится только в памяти вкладки.</p>
-      </section>
-    );
+    return <EmployeeAccessScreen
+      authClient={authClient}
+      sessionWarning={
+        <>
+          {isSessionWarning ? (
+            <Alert role="alert">
+              Сессия завершится в {Math.max(0, Math.ceil((new Date(session.idleExpiresAt).getTime() - now) / 60_000))} мин. Несохранённые изменения не будут отправлены после завершения. {" "}
+              <button className="ml-1 font-semibold underline underline-offset-4" disabled={authBusy} onClick={() => void continueSession()} type="button">Продолжить работу</button>
+            </Alert>
+          ) : null}
+          {authError !== null ? <Alert role="alert">{authError}</Alert> : null}
+        </>
+      }
+    />;
   })();
+
+  const fullWorkspace = authClient !== undefined && authReady && session !== null && !passwordChangeRequired && !recoveryResetRoute;
 
   return (
     <div className="min-h-screen bg-canvas text-ink">
       <EnvironmentBanner environment={clientEnvironment} />
-      <main className="mx-auto flex min-h-[calc(100vh-40px)] max-w-3xl items-center px-6 py-12">
+      {fullWorkspace && !workspaceBlocked && healthQuery.isSuccess ? workspace : <main className="mx-auto flex min-h-[calc(100vh-40px)] max-w-3xl items-center px-6 py-12">
         <Card className="w-full">
           <p className="text-sm font-medium text-muted">InMotion CRM</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">Рабочее пространство</h1>
@@ -243,7 +248,7 @@ export function App({ clientEnvironment, loadHealth, authClient }: AppProps) {
             {!workspaceBlocked && healthQuery.isSuccess ? workspace : null}
           </section>
         </Card>
-      </main>
+      </main>}
     </div>
   );
 }

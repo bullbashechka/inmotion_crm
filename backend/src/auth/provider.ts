@@ -19,6 +19,7 @@ export type AuthProvider = {
   signInWithPassword(input: { login: string; password: string }): Promise<ProviderSignInResult>;
   refreshSession(refreshToken: string): Promise<ProviderSignInResult>;
   updatePassword(input: { subjectId: string; password: string }): Promise<"updated" | "unavailable">;
+  restoreUser(input: { subjectId: string; password: string; marker: string }): Promise<"restored" | "unavailable">;
   banUser(subjectId: string): Promise<"banned" | "unavailable">;
   sendPasswordRecovery(input: { login: string; redirectTo: string; codeChallenge: string }): Promise<"accepted" | "unavailable">;
   exchangeRecoveryCode(input: { code: string; codeVerifier: string }): Promise<ProviderSignInResult>;
@@ -110,6 +111,23 @@ export class SupabaseAuthProvider implements AuthProvider {
         body: JSON.stringify({ password: input.password }),
       });
       return response.ok ? "updated" : "unavailable";
+    } catch {
+      return "unavailable";
+    }
+  }
+
+  async restoreUser(input: { subjectId: string; password: string; marker: string }): Promise<"restored" | "unavailable"> {
+    try {
+      const response = await fetch(`${this.#baseUrl}/auth/v1/admin/users/${encodeURIComponent(input.subjectId)}`, {
+        method: "PUT",
+        headers: this.serviceHeaders(),
+        body: JSON.stringify({
+          password: input.password,
+          ban_duration: "none",
+          app_metadata: { inmotion_marker: input.marker },
+        }),
+      });
+      return response.ok ? "restored" : "unavailable";
     } catch {
       return "unavailable";
     }

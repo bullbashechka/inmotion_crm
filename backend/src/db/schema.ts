@@ -47,13 +47,16 @@ export const employees = crm.table("employees", {
   fullName: text("full_name").notNull(),
   email: text("email").notNull(),
   contactEmail: text("contact_email"),
+  recoveryEmail: text("recovery_email").notNull(),
   currentEmploymentEpochId: uuid("current_employment_epoch_id").references(() => employmentEpochs.id, { onDelete: "restrict" }),
   ...lifecycleColumns,
 }, (table) => [
   unique("employees_auth_subject_unique").on(table.authSubjectId),
   uniqueIndex("employees_email_unique").on(sql`lower(${table.email})`),
+  uniqueIndex("employees_recovery_email_unique").on(sql`lower(${table.recoveryEmail})`),
   check("employees_full_name_not_blank", nonBlank(table.fullName)),
   check("employees_email_not_blank", nonBlank(table.email)),
+  check("employees_recovery_email_not_blank", nonBlank(table.recoveryEmail)),
   check("employees_version_positive", positiveVersion(table.version)),
 ]);
 
@@ -97,6 +100,8 @@ export const employeeSecurityStates = crm.table("employee_security_states", {
   credentialState: text("credential_state").notNull().default("unready"),
   loginFailureCount: integer("login_failure_count").notNull().default(0),
   loginLockedUntil: timestamp("login_locked_until", { withTimezone: true, mode: "date" }),
+  loginFailureWindowStartedAt: timestamp("login_failure_window_started_at", { withTimezone: true, mode: "date" }),
+  temporaryPasswordExpiresAt: timestamp("temporary_password_expires_at", { withTimezone: true, mode: "date" }),
   sessionEpoch: integer("session_epoch").notNull().default(1),
   credentialEpoch: integer("credential_epoch").notNull().default(1),
   authorizationRevision: integer("authorization_revision").notNull().default(1),
@@ -111,6 +116,7 @@ export const employeeSecurityStates = crm.table("employee_security_states", {
   check("employee_security_states_access_valid", sql`${table.accessState} IN ('active', 'suspended', 'security_quarantined', 'terminated')`),
   check("employee_security_states_credential_valid", sql`${table.credentialState} IN ('unready', 'temporary_password', 'ready', 'password_change_required', 'changing', 'reconciliation_required', 'disabled')`),
   check("employee_security_states_failure_count_valid", sql`${table.loginFailureCount} BETWEEN 0 AND 5`),
+  check("employee_security_states_temporary_password_expiry_valid", sql`(${table.credentialState} = 'temporary_password' AND ${table.temporaryPasswordExpiresAt} IS NOT NULL) OR ${table.credentialState} <> 'temporary_password'`),
   check("employee_security_states_session_epoch_positive", sql`${table.sessionEpoch} > 0`),
   check("employee_security_states_credential_epoch_positive", sql`${table.credentialEpoch} > 0`),
   check("employee_security_states_authorization_revision_positive", positiveVersion(table.authorizationRevision)),
@@ -120,6 +126,7 @@ export const employeeSecurityStates = crm.table("employee_security_states", {
 export const loginClaims = crm.table("login_claims", {
   id: uuid("id").primaryKey(),
   canonicalLogin: text("canonical_login").notNull(),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id, { onDelete: "restrict" }),
   employmentEpochId: uuid("employment_epoch_id").references(() => employmentEpochs.id, { onDelete: "restrict" }),
   state: text("state").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
@@ -127,6 +134,7 @@ export const loginClaims = crm.table("login_claims", {
 }, (table) => [
   unique("login_claims_canonical_login_unique").on(table.canonicalLogin),
   check("login_claims_canonical_login_not_blank", nonBlank(table.canonicalLogin)),
+  check("login_claims_username_format", sql`${table.canonicalLogin} ~ '^[a-z0-9](?:[a-z0-9._-]{1,62}[a-z0-9])?$'`),
   check("login_claims_state_valid", sql`${table.state} IN ('reserved', 'active', 'tombstoned', 'cancelled')`),
 ]);
 
@@ -141,7 +149,9 @@ export const authBindings = crm.table("auth_bindings", {
   confirmedAt: timestamp("confirmed_at", { withTimezone: true, mode: "date" }),
   endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
 }, (table) => [
-  unique("auth_bindings_provider_subject_unique").on(table.providerNamespace, table.providerSubjectId),
+  uniqueIndex("auth_bindings_one_current_provider_subject_unique")
+    .on(table.providerNamespace, table.providerSubjectId)
+    .where(sql`${table.state} IN ('reserved', 'confirmed', 'active')`),
   uniqueIndex("auth_bindings_one_current_epoch_unique")
     .on(table.employmentEpochId)
     .where(sql`${table.state} IN ('reserved', 'confirmed', 'active')`),
@@ -235,6 +245,7 @@ export const employeePermissionOverrides = crm.table("employee_permission_overri
   scope: jsonb("scope"),
   grantedByEmployeeId: uuid("granted_by_employee_id").references(() => employees.id, { onDelete: "restrict" }),
   reason: text("reason").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
   revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
   version: integer("version").notNull().default(1),
 }, (table) => [
@@ -244,6 +255,7 @@ export const employeePermissionOverrides = crm.table("employee_permission_overri
   check("employee_permission_overrides_mode_valid", sql`${table.mode} IN ('replace', 'deny')`),
   check("employee_permission_overrides_reason_not_blank", nonBlank(table.reason)),
   check("employee_permission_overrides_scope_valid", sql`(${table.mode} = 'deny' AND ${table.scope} IS NULL) OR (${table.mode} = 'replace' AND ${table.scope} IS NOT NULL)`),
+  check("employee_permission_overrides_expiry_valid", sql`${table.expiresAt} IS NULL OR ${table.expiresAt} > ${table.createdAt}`),
   check("employee_permission_overrides_version_positive", positiveVersion(table.version)),
 ]);
 
@@ -512,6 +524,7 @@ export const auditEntries = crm.table("audit_entries", {
   entityType: text("entity_type").notNull(),
   entityId: uuid("entity_id").notNull(),
   reason: text("reason").notNull(),
+  reasonCode: text("reason_code"),
   before: jsonb("before"),
   after: jsonb("after"),
   expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
@@ -524,6 +537,28 @@ export const auditEntries = crm.table("audit_entries", {
   check("audit_entries_view_scope_not_blank", nonBlank(table.viewScope)),
   check("audit_entries_entity_type_not_blank", nonBlank(table.entityType)),
   check("audit_entries_reason_not_blank", nonBlank(table.reason)),
+]);
+
+export const unassignedResponsibilities = crm.table("unassigned_responsibilities", {
+  id: uuid("id").primaryKey(),
+  categoryCode: text("category_code").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: uuid("entity_id").notNull(),
+  previousEmployeeId: uuid("previous_employee_id").notNull().references(() => employees.id, { onDelete: "restrict" }),
+  reason: text("reason").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+  resolvedByEmployeeId: uuid("resolved_by_employee_id").references(() => employees.id, { onDelete: "restrict" }),
+}, (table) => [
+  uniqueIndex("unassigned_responsibilities_open_entity_unique")
+    .on(table.categoryCode, table.entityType, table.entityId)
+    .where(sql`${table.resolvedAt} IS NULL`),
+  index("unassigned_responsibilities_open_queue_idx")
+    .on(table.categoryCode, table.createdAt)
+    .where(sql`${table.resolvedAt} IS NULL`),
+  check("unassigned_responsibilities_category_not_blank", nonBlank(table.categoryCode)),
+  check("unassigned_responsibilities_entity_type_not_blank", nonBlank(table.entityType)),
+  check("unassigned_responsibilities_reason_not_blank", nonBlank(table.reason)),
 ]);
 
 /** A completed command response is retained so a network retry can replay it. */

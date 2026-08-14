@@ -82,6 +82,7 @@ export class AccessControlService {
         WHERE employee_id = ${actor.employeeId}::uuid
           AND employment_epoch_id = ${actor.employmentEpochId}::uuid
           AND revoked_at IS NULL
+          AND (expires_at IS NULL OR expires_at > clock_timestamp())
       `),
     ]);
     return resolveEffectivePermissions(roleResult.rows, overrideResult.rows);

@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 
-import { AccessControlService, AuthorizationError } from "./control";
-import { canonicalizeLogin, createOpaqueToken } from "../auth/crypto";
+import { AccessControlService, AuthorizationError, parseRecordScope, type RecordScope } from "./control";
+import { canonicalizeEmail, canonicalizeUsername, createOpaqueToken } from "../auth/crypto";
 import type { AuthProvider } from "../auth/provider";
 import type { RequestDatabase } from "../db/integrity";
 import { createUuidV7 } from "../db/uuidv7";
@@ -34,7 +34,9 @@ export type CreateEmployeeInput = {
 export type CreatedEmployee = {
   employeeId: string;
   employmentEpochId: string;
-  temporaryPassword: string;
+  provisioningState: "pending_activation" | "provisioning";
+  /** Only the deployment bootstrap script receives an initial one-time secret. */
+  temporaryPassword?: string;
 };
 
 export type OffboardEmployeeInput = {
@@ -54,6 +56,25 @@ export type RehireEmployeeInput = {
 };
 
 export type TemporaryPasswordIssued = { temporaryPassword: string };
+
+export type EmployeeSummary = {
+  id: string;
+  fullName: string;
+  login: string | null;
+  roles: string[];
+  accessState: "active" | "pending_activation" | "suspended" | "security_quarantined" | "terminated";
+  credentialState: string;
+  temporaryPasswordExpiresAt: string | null;
+  lastSignInAt: string | null;
+  version: number;
+};
+
+export type EmployeeDetail = EmployeeSummary & {
+  recoveryEmail: string;
+  assignedRoles: { id: string; code: string; source: string }[];
+  effectivePermissions: { permissionCode: string; resourceFamily: string; scope: RecordScope; source: "role" | "override"; sourceLabel: string; expiresAt: string | null }[];
+  overrides: { permissionCode: string; mode: "replace" | "deny"; scope: { records: RecordScope } | null; expiresAt: string | null; reason: string }[];
+};
 
 export type EmployeeServiceOptions = {
   withDatabase: DatabaseRunner;
@@ -101,6 +122,39 @@ async function activeEmployee(database: RequestDatabase, employeeId: string): Pr
   return row !== undefined && row.accessState === "active" && row.employmentState === "active" ? row : null;
 }
 
+function scopeRank(scope: RecordScope): number {
+  return scope === "all" ? 3 : scope === "assigned" ? 2 : 1;
+}
+
+function toEmployeeSummary(row: {
+  id: string;
+  fullName: string;
+  login: string | null;
+  roles: string[] | null;
+  accessState: string;
+  credentialState: string;
+  temporaryPasswordExpiresAt: Date | null;
+  lastSignInAt: Date | null;
+  version: number;
+}): EmployeeSummary {
+  const accessState = row.accessState === "active" && row.credentialState === "unready"
+    ? "pending_activation"
+    : row.accessState === "active" || row.accessState === "suspended" || row.accessState === "security_quarantined" || row.accessState === "terminated"
+      ? row.accessState
+      : "pending_activation";
+  return {
+    id: row.id,
+    fullName: row.fullName,
+    login: row.login,
+    roles: row.roles ?? [],
+    accessState,
+    credentialState: row.credentialState,
+    temporaryPasswordExpiresAt: row.temporaryPasswordExpiresAt?.toISOString() ?? null,
+    lastSignInAt: row.lastSignInAt?.toISOString() ?? null,
+    version: row.version,
+  };
+}
+
 export class EmployeeService {
   private readonly accessControl: AccessControlService;
 
@@ -108,9 +162,174 @@ export class EmployeeService {
     this.accessControl = options.accessControl ?? new AccessControlService();
   }
 
+  async listEmployees(actor: Actor): Promise<EmployeeSummary[]> {
+    return this.options.withDatabase(async (database) => {
+      await this.accessControl.requirePermission(database, actor, "employees.manage", "all");
+      const result = await database.execute<{
+        id: string;
+        fullName: string;
+        login: string | null;
+        roles: string[] | null;
+        accessState: string;
+        credentialState: string;
+        temporaryPasswordExpiresAt: Date | null;
+        lastSignInAt: Date | null;
+        version: number;
+      }>(sql`
+        SELECT
+          employee.id,
+          employee.full_name AS "fullName",
+          claim.canonical_login AS login,
+          array_remove(array_agg(DISTINCT role.code), NULL) AS roles,
+          security.access_state AS "accessState",
+          security.credential_state AS "credentialState",
+          security.temporary_password_expires_at AS "temporaryPasswordExpiresAt",
+          max(attempt.occurred_at) FILTER (WHERE attempt.outcome = 'succeeded') AS "lastSignInAt",
+          employee.version
+        FROM crm.employees AS employee
+        LEFT JOIN crm.employee_security_states AS security ON security.employee_id = employee.id
+        LEFT JOIN crm.login_claims AS claim
+          ON claim.employee_id = employee.id
+         AND claim.employment_epoch_id = security.employment_epoch_id
+         AND claim.state = 'active'
+        LEFT JOIN crm.role_assignments AS assignment
+          ON assignment.employee_id = employee.id
+         AND assignment.employment_epoch_id = security.employment_epoch_id
+         AND assignment.revoked_at IS NULL
+        LEFT JOIN crm.roles AS role ON role.id = assignment.role_id AND role.archived_at IS NULL
+        LEFT JOIN crm.auth_login_attempts AS attempt ON attempt.employee_id = employee.id
+        GROUP BY employee.id, claim.canonical_login, security.access_state, security.credential_state,
+          security.temporary_password_expires_at, employee.version
+        ORDER BY employee.full_name
+      `);
+      return result.rows.map((row) => toEmployeeSummary(row));
+    });
+  }
+
+  async getEmployee(actor: Actor, employeeId: string): Promise<EmployeeDetail> {
+    return this.options.withDatabase(async (database) => {
+      await this.accessControl.requirePermission(database, actor, "employees.manage", "all");
+      const summaryRows = await database.execute<{
+        id: string;
+        fullName: string;
+        login: string | null;
+        roles: string[] | null;
+        accessState: string;
+        credentialState: string;
+        temporaryPasswordExpiresAt: Date | null;
+        lastSignInAt: Date | null;
+        version: number;
+        recoveryEmail: string;
+        employmentEpochId: string;
+      }>(sql`
+        SELECT
+          employee.id,
+          employee.full_name AS "fullName",
+          claim.canonical_login AS login,
+          array_remove(array_agg(DISTINCT role.code), NULL) AS roles,
+          security.access_state AS "accessState",
+          security.credential_state AS "credentialState",
+          security.temporary_password_expires_at AS "temporaryPasswordExpiresAt",
+          max(attempt.occurred_at) FILTER (WHERE attempt.outcome = 'succeeded') AS "lastSignInAt",
+          employee.version,
+          employee.recovery_email AS "recoveryEmail",
+          security.employment_epoch_id AS "employmentEpochId"
+        FROM crm.employees AS employee
+        JOIN crm.employee_security_states AS security ON security.employee_id = employee.id
+        LEFT JOIN crm.login_claims AS claim
+          ON claim.employee_id = employee.id
+         AND claim.employment_epoch_id = security.employment_epoch_id
+         AND claim.state = 'active'
+        LEFT JOIN crm.role_assignments AS assignment
+          ON assignment.employee_id = employee.id
+         AND assignment.employment_epoch_id = security.employment_epoch_id
+         AND assignment.revoked_at IS NULL
+        LEFT JOIN crm.roles AS role ON role.id = assignment.role_id AND role.archived_at IS NULL
+        LEFT JOIN crm.auth_login_attempts AS attempt ON attempt.employee_id = employee.id
+        WHERE employee.id = ${employeeId}::uuid
+        GROUP BY employee.id, claim.canonical_login, security.access_state, security.credential_state,
+          security.temporary_password_expires_at, employee.version, employee.recovery_email, security.employment_epoch_id
+      `);
+      const base = summaryRows.rows[0];
+      if (base === undefined) throw new EmployeeServiceError("EMPLOYEE_NOT_FOUND", 404, false, "Сотрудник не найден.");
+      const [roles, grants, overrides] = await Promise.all([
+        database.execute<{ id: string; code: string; reason: string }>(sql`
+          SELECT role.id, role.code, assignment.reason
+          FROM crm.role_assignments AS assignment
+          JOIN crm.roles AS role ON role.id = assignment.role_id AND role.archived_at IS NULL
+          WHERE assignment.employee_id = ${employeeId}::uuid
+            AND assignment.employment_epoch_id = ${base.employmentEpochId}::uuid
+            AND assignment.revoked_at IS NULL
+          ORDER BY role.code
+        `),
+        database.execute<{ permissionCode: string; resourceFamily: string; scope: unknown; roleCode: string }>(sql`
+          SELECT grant.permission_code AS "permissionCode", catalog.resource_family AS "resourceFamily", grant.scope, role.code AS "roleCode"
+          FROM crm.role_assignments AS assignment
+          JOIN crm.roles AS role ON role.id = assignment.role_id AND role.archived_at IS NULL
+          JOIN crm.role_grants AS grant ON grant.role_revision_id = role.current_revision_id
+          JOIN crm.permission_catalog AS catalog ON catalog.code = grant.permission_code
+          WHERE assignment.employee_id = ${employeeId}::uuid
+            AND assignment.employment_epoch_id = ${base.employmentEpochId}::uuid
+            AND assignment.revoked_at IS NULL
+        `),
+        database.execute<{ permissionCode: string; mode: "replace" | "deny"; scope: unknown; expiresAt: Date | null; reason: string }>(sql`
+          SELECT permission_code AS "permissionCode", mode, scope, expires_at AS "expiresAt", reason
+          FROM crm.employee_permission_overrides
+          WHERE employee_id = ${employeeId}::uuid
+            AND employment_epoch_id = ${base.employmentEpochId}::uuid
+            AND revoked_at IS NULL
+          ORDER BY permission_code
+        `),
+      ]);
+      const effective = new Map<string, EmployeeDetail["effectivePermissions"][number]>();
+      for (const grant of grants.rows) {
+        const scope = parseRecordScope(grant.scope);
+        if (scope === null) continue;
+        const previous = effective.get(grant.permissionCode);
+        if (previous === undefined || scopeRank(scope) > scopeRank(previous.scope)) {
+          effective.set(grant.permissionCode, { permissionCode: grant.permissionCode, resourceFamily: grant.resourceFamily, scope, source: "role", sourceLabel: `Роль ${grant.roleCode}`, expiresAt: null });
+        }
+      }
+      for (const override of overrides.rows) {
+        const expired = override.expiresAt !== null && override.expiresAt.getTime() <= Date.now();
+        if (expired || override.mode === "deny") {
+          effective.delete(override.permissionCode);
+          continue;
+        }
+        const scope = parseRecordScope(override.scope);
+        if (scope === null) {
+          effective.delete(override.permissionCode);
+          continue;
+        }
+        const inherited = effective.get(override.permissionCode);
+        effective.set(override.permissionCode, {
+          permissionCode: override.permissionCode,
+          resourceFamily: inherited?.resourceFamily ?? "custom",
+          scope,
+          source: "override",
+          sourceLabel: "Индивидуальное исключение",
+          expiresAt: override.expiresAt?.toISOString() ?? null,
+        });
+      }
+      return {
+        ...toEmployeeSummary(base),
+        recoveryEmail: base.recoveryEmail,
+        assignedRoles: roles.rows.map((role) => ({ id: role.id, code: role.code, source: role.reason })),
+        effectivePermissions: [...effective.values()].sort((left, right) => left.permissionCode.localeCompare(right.permissionCode)),
+        overrides: overrides.rows.map((override) => ({
+          permissionCode: override.permissionCode,
+          mode: override.mode,
+          scope: parseRecordScope(override.scope) === null ? null : { records: parseRecordScope(override.scope)! },
+          expiresAt: override.expiresAt?.toISOString() ?? null,
+          reason: override.reason,
+        })),
+      };
+    });
+  }
+
   async createEmployee(actor: Actor, input: CreateEmployeeInput): Promise<CreatedEmployee> {
-    const login = canonicalizeLogin(input.login);
-    const contactEmail = canonicalizeLogin(input.contactEmail);
+    const login = canonicalizeUsername(input.login);
+    const contactEmail = canonicalizeEmail(input.contactEmail);
     const fullName = input.fullName.trim();
     const reason = input.reason.trim();
     if (login === null || contactEmail === null || fullName === "" || reason === "") {
@@ -133,8 +352,8 @@ export class EmployeeService {
       const bindingId = createUuidV7();
       const marker = createOpaqueToken();
       await transaction.execute(sql`
-        INSERT INTO crm.employees (id, full_name, email, contact_email, created_at, updated_at)
-        VALUES (${employeeId}::uuid, ${fullName}::text, ${contactEmail}::text, ${contactEmail}::text, clock_timestamp(), clock_timestamp())
+        INSERT INTO crm.employees (id, full_name, email, contact_email, recovery_email, created_at, updated_at)
+        VALUES (${employeeId}::uuid, ${fullName}::text, ${contactEmail}::text, ${contactEmail}::text, ${contactEmail}::text, clock_timestamp(), clock_timestamp())
       `);
       await transaction.execute(sql`
         INSERT INTO crm.employment_epochs (id, employee_id, sequence, state)
@@ -145,8 +364,8 @@ export class EmployeeService {
         VALUES (${employeeId}::uuid, ${employmentEpochId}::uuid, 'suspended', 'unready')
       `);
       await transaction.execute(sql`
-        INSERT INTO crm.login_claims (id, canonical_login, employment_epoch_id, state)
-        VALUES (${createUuidV7()}::uuid, ${login}::text, ${employmentEpochId}::uuid, 'reserved')
+        INSERT INTO crm.login_claims (id, canonical_login, employee_id, employment_epoch_id, state)
+        VALUES (${createUuidV7()}::uuid, ${login}::text, ${employeeId}::uuid, ${employmentEpochId}::uuid, 'reserved')
       `);
       await transaction.execute(sql`
         INSERT INTO crm.auth_bindings (id, employment_epoch_id, provider_namespace, provider_subject_id, provider_marker, state)
@@ -160,21 +379,21 @@ export class EmployeeService {
         INSERT INTO crm.security_outbox (id, operation, aggregate_type, aggregate_id, expected_epoch, payload)
         VALUES (
           ${createUuidV7()}::uuid, 'provider_user_provision', 'employment_epoch', ${employmentEpochId}::uuid, 1,
-          ${JSON.stringify({ subjectId, login, marker })}::jsonb
+          ${JSON.stringify({ subjectId, recoveryEmail: contactEmail, marker })}::jsonb
         )
       `);
       await writeSecurityAudit(transaction, { actorEmployeeId: actor.employeeId, action: "employee.provisioning.started", entityType: "employee", entityId: employeeId, reason, after: { employmentEpochId } });
-      return { employeeId, employmentEpochId, subjectId, bindingId, marker, login };
+      return { employeeId, employmentEpochId, subjectId, bindingId, marker, login, recoveryEmail: contactEmail };
     }));
 
     const password = temporaryPassword();
-    const provisioned = await this.options.provider.createUser({ subjectId: reservation.subjectId, login: reservation.login, temporaryPassword: password, marker: reservation.marker });
+    const provisioned = await this.options.provider.createUser({ subjectId: reservation.subjectId, login: reservation.recoveryEmail, temporaryPassword: password, marker: reservation.marker });
     const exactIdentity = provisioned === "unavailable" ? "unavailable" : await this.options.provider.getUserById(reservation.subjectId);
     if (exactIdentity === "unavailable") {
       await this.markProvisionPending(reservation.employeeId, "provider_unavailable");
       throw new EmployeeServiceError("PROVISIONING_UNAVAILABLE", 503, true, "Учётная запись создаётся. Повторите проверку позже; пароль не был выдан.");
     }
-    if (exactIdentity === null || exactIdentity.subjectId !== reservation.subjectId || exactIdentity.login !== reservation.login || exactIdentity.marker !== reservation.marker) {
+    if (exactIdentity === null || exactIdentity.subjectId !== reservation.subjectId || exactIdentity.login !== reservation.recoveryEmail || exactIdentity.marker !== reservation.marker) {
       await this.failProvision(reservation.employeeId, reservation.employmentEpochId, "provider_identity_mismatch");
       throw new EmployeeServiceError("IDENTITY_RECONCILIATION_REQUIRED", 409, false, "Учётная запись требует проверки безопасности.");
     }
@@ -197,7 +416,7 @@ export class EmployeeService {
       `);
       await transaction.execute(sql`
         UPDATE crm.employee_security_states
-        SET access_state = 'active', credential_state = 'temporary_password', provider_reconciled_at = clock_timestamp(),
+        SET access_state = 'active', credential_state = 'unready', temporary_password_expires_at = NULL, provider_reconciled_at = clock_timestamp(),
             updated_at = clock_timestamp(), version = version + 1
         WHERE employee_id = ${reservation.employeeId}::uuid AND employment_epoch_id = ${reservation.employmentEpochId}::uuid
       `);
@@ -213,7 +432,7 @@ export class EmployeeService {
       `);
       await writeSecurityAudit(transaction, { actorEmployeeId: actor.employeeId, action: "employee.provisioned", entityType: "employee", entityId: reservation.employeeId, reason, after: { employmentEpochId: reservation.employmentEpochId } });
     }));
-    return { employeeId: reservation.employeeId, employmentEpochId: reservation.employmentEpochId, temporaryPassword: password };
+    return { employeeId: reservation.employeeId, employmentEpochId: reservation.employmentEpochId, provisioningState: "pending_activation" };
   }
 
   /**
@@ -222,8 +441,8 @@ export class EmployeeService {
    * after which all employee management goes through normal RBAC commands.
    */
   async bootstrapInitialLeader(input: Omit<CreateEmployeeInput, "roleId">): Promise<CreatedEmployee> {
-    const login = canonicalizeLogin(input.login);
-    const contactEmail = canonicalizeLogin(input.contactEmail);
+    const login = canonicalizeUsername(input.login);
+    const contactEmail = canonicalizeEmail(input.contactEmail);
     const fullName = input.fullName.trim();
     const reason = input.reason.trim();
     if (login === null || contactEmail === null || fullName === "" || reason === "") {
@@ -243,27 +462,27 @@ export class EmployeeService {
       const bindingId = createUuidV7();
       const marker = createOpaqueToken();
       await transaction.execute(sql`
-        INSERT INTO crm.employees (id, full_name, email, contact_email, created_at, updated_at)
-        VALUES (${employeeId}::uuid, ${fullName}::text, ${contactEmail}::text, ${contactEmail}::text, clock_timestamp(), clock_timestamp())
+        INSERT INTO crm.employees (id, full_name, email, contact_email, recovery_email, created_at, updated_at)
+        VALUES (${employeeId}::uuid, ${fullName}::text, ${contactEmail}::text, ${contactEmail}::text, ${contactEmail}::text, clock_timestamp(), clock_timestamp())
       `);
       await transaction.execute(sql`INSERT INTO crm.employment_epochs (id, employee_id, sequence, state) VALUES (${employmentEpochId}::uuid, ${employeeId}::uuid, 1, 'provider_creating')`);
       await transaction.execute(sql`INSERT INTO crm.employee_security_states (employee_id, employment_epoch_id, access_state, credential_state) VALUES (${employeeId}::uuid, ${employmentEpochId}::uuid, 'suspended', 'unready')`);
-      await transaction.execute(sql`INSERT INTO crm.login_claims (id, canonical_login, employment_epoch_id, state) VALUES (${createUuidV7()}::uuid, ${login}::text, ${employmentEpochId}::uuid, 'reserved')`);
+      await transaction.execute(sql`INSERT INTO crm.login_claims (id, canonical_login, employee_id, employment_epoch_id, state) VALUES (${createUuidV7()}::uuid, ${login}::text, ${employeeId}::uuid, ${employmentEpochId}::uuid, 'reserved')`);
       await transaction.execute(sql`INSERT INTO crm.auth_bindings (id, employment_epoch_id, provider_namespace, provider_subject_id, provider_marker, state) VALUES (${bindingId}::uuid, ${employmentEpochId}::uuid, ${this.options.providerNamespace}::text, ${subjectId}::uuid, ${marker}::text, 'reserved')`);
       await transaction.execute(sql`
         INSERT INTO crm.role_assignments (id, employee_id, employment_epoch_id, role_id, reason)
         VALUES (${createUuidV7()}::uuid, ${employeeId}::uuid, ${employmentEpochId}::uuid, '00000000-0000-7000-8000-000000000401'::uuid, ${reason}::text)
       `);
-      return { employeeId, employmentEpochId, subjectId, bindingId, marker, login };
+      return { employeeId, employmentEpochId, subjectId, bindingId, marker, login, recoveryEmail: contactEmail };
     }));
     const password = temporaryPassword();
-    const provisioned = await this.options.provider.createUser({ subjectId: reservation.subjectId, login: reservation.login, temporaryPassword: password, marker: reservation.marker });
+    const provisioned = await this.options.provider.createUser({ subjectId: reservation.subjectId, login: reservation.recoveryEmail, temporaryPassword: password, marker: reservation.marker });
     const exactIdentity = provisioned === "unavailable" ? "unavailable" : await this.options.provider.getUserById(reservation.subjectId);
     if (exactIdentity === "unavailable") {
       await this.markProvisionPending(reservation.employeeId, "bootstrap_provider_unavailable");
       throw new EmployeeServiceError("PROVISIONING_UNAVAILABLE", 503, true, "Учётная запись руководителя создаётся. Временный пароль не был выдан.");
     }
-    if (exactIdentity === null || exactIdentity.subjectId !== reservation.subjectId || exactIdentity.login !== reservation.login || exactIdentity.marker !== reservation.marker) {
+    if (exactIdentity === null || exactIdentity.subjectId !== reservation.subjectId || exactIdentity.login !== reservation.recoveryEmail || exactIdentity.marker !== reservation.marker) {
       await this.failProvision(reservation.employeeId, reservation.employmentEpochId, "bootstrap_provider_identity_mismatch");
       throw new EmployeeServiceError("IDENTITY_RECONCILIATION_REQUIRED", 409, false, "Учётная запись руководителя требует проверки безопасности.");
     }
@@ -271,7 +490,7 @@ export class EmployeeService {
       await transaction.execute(sql`UPDATE crm.auth_bindings SET state = 'active', confirmed_at = clock_timestamp() WHERE id = ${reservation.bindingId}::uuid AND state = 'reserved'`);
       await transaction.execute(sql`UPDATE crm.login_claims SET state = 'active' WHERE employment_epoch_id = ${reservation.employmentEpochId}::uuid AND state = 'reserved'`);
       await transaction.execute(sql`UPDATE crm.employment_epochs SET state = 'active', started_at = clock_timestamp(), updated_at = clock_timestamp(), version = version + 1 WHERE id = ${reservation.employmentEpochId}::uuid AND state = 'provider_creating'`);
-      await transaction.execute(sql`UPDATE crm.employee_security_states SET access_state = 'active', credential_state = 'temporary_password', provider_reconciled_at = clock_timestamp(), updated_at = clock_timestamp(), version = version + 1 WHERE employee_id = ${reservation.employeeId}::uuid`);
+      await transaction.execute(sql`UPDATE crm.employee_security_states SET access_state = 'active', credential_state = 'temporary_password', temporary_password_expires_at = clock_timestamp() + interval '72 hours', provider_reconciled_at = clock_timestamp(), updated_at = clock_timestamp(), version = version + 1 WHERE employee_id = ${reservation.employeeId}::uuid`);
       await transaction.execute(sql`UPDATE crm.employees SET current_employment_epoch_id = ${reservation.employmentEpochId}::uuid, updated_at = clock_timestamp(), version = version + 1 WHERE id = ${reservation.employeeId}::uuid`);
       await transaction.execute(sql`
         INSERT INTO crm.clinic_security_states (id, security_initialized_at)
@@ -282,23 +501,25 @@ export class EmployeeService {
       `);
       await writeSecurityAudit(transaction, { actorEmployeeId: null, action: "security.initial_leader.bootstrapped", entityType: "employee", entityId: reservation.employeeId, reason });
     }));
-    return { employeeId: reservation.employeeId, employmentEpochId: reservation.employmentEpochId, temporaryPassword: password };
+    return { employeeId: reservation.employeeId, employmentEpochId: reservation.employmentEpochId, provisioningState: "pending_activation", temporaryPassword: password };
   }
 
   /** A rehire retains the person and historic authorship but creates a new immutable employment identity. */
   async rehireEmployee(actor: Actor, input: RehireEmployeeInput): Promise<CreatedEmployee> {
-    const login = canonicalizeLogin(input.login);
-    const contactEmail = canonicalizeLogin(input.contactEmail);
+    const login = canonicalizeUsername(input.login);
+    const contactEmail = canonicalizeEmail(input.contactEmail);
     const reason = input.reason.trim();
     if (login === null || contactEmail === null || reason === "") throw new EmployeeServiceError("EMPLOYEE_CONFLICT", 422, false, "Проверьте данные повторного найма.");
     const reservation = await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
       if (!(await this.accessControl.isLeader(transaction, actor))) {
         throw new AuthorizationError("SENSITIVE_PERMISSION_REQUIRED", "Только руководитель может повторно принять сотрудника.");
       }
-      const former = await transaction.execute<{ employeeId: string; oldEpochId: string; accessState: string; employmentState: string }>(sql`
-        SELECT security.employee_id AS "employeeId", security.employment_epoch_id AS "oldEpochId", security.access_state AS "accessState", epoch.state AS "employmentState"
+      const former = await transaction.execute<{ employeeId: string; oldEpochId: string; accessState: string; employmentState: string; providerSubjectId: string }>(sql`
+        SELECT security.employee_id AS "employeeId", security.employment_epoch_id AS "oldEpochId", security.access_state AS "accessState", epoch.state AS "employmentState",
+          binding.provider_subject_id AS "providerSubjectId"
         FROM crm.employee_security_states AS security
         JOIN crm.employment_epochs AS epoch ON epoch.id = security.employment_epoch_id
+        JOIN crm.auth_bindings AS binding ON binding.employment_epoch_id = epoch.id AND binding.state = 'ended'
         WHERE security.employee_id = ${input.employeeId}::uuid
         LIMIT 1
         FOR UPDATE OF security, epoch
@@ -307,13 +528,18 @@ export class EmployeeService {
       if (employee === undefined || employee.accessState !== "terminated" || employee.employmentState !== "terminated") {
         throw new EmployeeServiceError("EMPLOYEE_CONFLICT", 409, false, "Повторный найм возможен только для уволенного сотрудника.");
       }
-      const existingLogin = await transaction.execute<{ id: string }>(sql`SELECT id FROM crm.login_claims WHERE canonical_login = ${login}::text LIMIT 1 FOR UPDATE`);
-      if (existingLogin.rows[0] !== undefined) throw new EmployeeServiceError("EMPLOYEE_CONFLICT", 409, false, "Логин уже зарезервирован в истории и не может быть использован повторно.");
+      const existingLogin = await transaction.execute<{ id: string; employeeId: string }>(sql`
+        SELECT id, employee_id AS "employeeId" FROM crm.login_claims
+        WHERE canonical_login = ${login}::text LIMIT 1 FOR UPDATE
+      `);
+      if (existingLogin.rows[0] !== undefined && existingLogin.rows[0].employeeId !== input.employeeId) {
+        throw new EmployeeServiceError("EMPLOYEE_CONFLICT", 409, false, "Этот логин закреплён за другим сотрудником.");
+      }
       const role = await transaction.execute<{ id: string }>(sql`SELECT id FROM crm.roles WHERE id = ${input.roleId}::uuid AND archived_at IS NULL LIMIT 1`);
       if (role.rows[0] === undefined) throw new EmployeeServiceError("EMPLOYEE_CONFLICT", 422, false, "Выбранная роль недоступна.");
       const sequenceResult = await transaction.execute<{ sequence: number }>(sql`SELECT COALESCE(max(sequence), 0) AS sequence FROM crm.employment_epochs WHERE employee_id = ${input.employeeId}::uuid`);
       const employmentEpochId = createUuidV7();
-      const subjectId = createUuidV7();
+      const subjectId = employee.providerSubjectId;
       const bindingId = createUuidV7();
       const marker = createOpaqueToken();
       await transaction.execute(sql`INSERT INTO crm.employment_epochs (id, employee_id, sequence, state) VALUES (${employmentEpochId}::uuid, ${input.employeeId}::uuid, ${(sequenceResult.rows[0]?.sequence ?? 0) + 1}::integer, 'provider_creating')`);
@@ -324,20 +550,28 @@ export class EmployeeService {
             updated_at = clock_timestamp(), version = version + 1
         WHERE employee_id = ${input.employeeId}::uuid
       `);
-      await transaction.execute(sql`INSERT INTO crm.login_claims (id, canonical_login, employment_epoch_id, state) VALUES (${createUuidV7()}::uuid, ${login}::text, ${employmentEpochId}::uuid, 'reserved')`);
+      if (existingLogin.rows[0] === undefined) {
+        await transaction.execute(sql`INSERT INTO crm.login_claims (id, canonical_login, employee_id, employment_epoch_id, state) VALUES (${createUuidV7()}::uuid, ${login}::text, ${input.employeeId}::uuid, ${employmentEpochId}::uuid, 'reserved')`);
+      } else {
+        await transaction.execute(sql`
+          UPDATE crm.login_claims
+          SET employment_epoch_id = ${employmentEpochId}::uuid, state = 'reserved', released_at = NULL
+          WHERE id = ${existingLogin.rows[0].id}::uuid
+        `);
+      }
       await transaction.execute(sql`INSERT INTO crm.auth_bindings (id, employment_epoch_id, provider_namespace, provider_subject_id, provider_marker, state) VALUES (${bindingId}::uuid, ${employmentEpochId}::uuid, ${this.options.providerNamespace}::text, ${subjectId}::uuid, ${marker}::text, 'reserved')`);
       await transaction.execute(sql`INSERT INTO crm.role_assignments (id, employee_id, employment_epoch_id, role_id, assigned_by_employee_id, reason) VALUES (${createUuidV7()}::uuid, ${input.employeeId}::uuid, ${employmentEpochId}::uuid, ${input.roleId}::uuid, ${actor.employeeId}::uuid, ${reason}::text)`);
-      await transaction.execute(sql`INSERT INTO crm.security_outbox (id, operation, aggregate_type, aggregate_id, expected_epoch, payload) VALUES (${createUuidV7()}::uuid, 'provider_user_provision', 'employment_epoch', ${employmentEpochId}::uuid, 1, ${JSON.stringify({ subjectId, login, marker })}::jsonb)`);
-      return { employeeId: input.employeeId, employmentEpochId, subjectId, bindingId, marker, login };
+      await transaction.execute(sql`INSERT INTO crm.security_outbox (id, operation, aggregate_type, aggregate_id, expected_epoch, payload) VALUES (${createUuidV7()}::uuid, 'provider_user_restore', 'employment_epoch', ${employmentEpochId}::uuid, 1, ${JSON.stringify({ subjectId, recoveryEmail: contactEmail, marker })}::jsonb)`);
+      return { employeeId: input.employeeId, employmentEpochId, subjectId, bindingId, marker, recoveryEmail: contactEmail };
     }));
     const password = temporaryPassword();
-    const provisioned = await this.options.provider.createUser({ subjectId: reservation.subjectId, login: reservation.login, temporaryPassword: password, marker: reservation.marker });
+    const provisioned = await this.options.provider.restoreUser({ subjectId: reservation.subjectId, password, marker: reservation.marker });
     const exactIdentity = provisioned === "unavailable" ? "unavailable" : await this.options.provider.getUserById(reservation.subjectId);
     if (exactIdentity === "unavailable") {
       await this.markProvisionPending(reservation.employeeId, "rehire_provider_unavailable");
       throw new EmployeeServiceError("PROVISIONING_UNAVAILABLE", 503, true, "Учётная запись создаётся. Временный пароль не был выдан.");
     }
-    if (exactIdentity === null || exactIdentity.subjectId !== reservation.subjectId || exactIdentity.login !== reservation.login || exactIdentity.marker !== reservation.marker) {
+    if (exactIdentity === null || exactIdentity.subjectId !== reservation.subjectId || exactIdentity.login !== reservation.recoveryEmail || exactIdentity.marker !== reservation.marker) {
       await this.failProvision(reservation.employeeId, reservation.employmentEpochId, "rehire_provider_identity_mismatch");
       throw new EmployeeServiceError("IDENTITY_RECONCILIATION_REQUIRED", 409, false, "Учётная запись требует проверки безопасности.");
     }
@@ -345,15 +579,16 @@ export class EmployeeService {
       await transaction.execute(sql`UPDATE crm.auth_bindings SET state = 'active', confirmed_at = clock_timestamp() WHERE id = ${reservation.bindingId}::uuid AND state = 'reserved'`);
       await transaction.execute(sql`UPDATE crm.login_claims SET state = 'active' WHERE employment_epoch_id = ${reservation.employmentEpochId}::uuid AND state = 'reserved'`);
       await transaction.execute(sql`UPDATE crm.employment_epochs SET state = 'active', started_at = clock_timestamp(), updated_at = clock_timestamp(), version = version + 1 WHERE id = ${reservation.employmentEpochId}::uuid AND state = 'provider_creating'`);
-      await transaction.execute(sql`UPDATE crm.employee_security_states SET access_state = 'active', credential_state = 'temporary_password', provider_reconciled_at = clock_timestamp(), updated_at = clock_timestamp(), version = version + 1 WHERE employee_id = ${reservation.employeeId}::uuid AND employment_epoch_id = ${reservation.employmentEpochId}::uuid`);
-      await transaction.execute(sql`UPDATE crm.employees SET contact_email = ${contactEmail}::text, email = ${contactEmail}::text, current_employment_epoch_id = ${reservation.employmentEpochId}::uuid, updated_at = clock_timestamp(), version = version + 1 WHERE id = ${reservation.employeeId}::uuid`);
-      await transaction.execute(sql`UPDATE crm.security_outbox SET state = 'completed', completed_at = clock_timestamp() WHERE operation = 'provider_user_provision' AND aggregate_type = 'employment_epoch' AND aggregate_id = ${reservation.employmentEpochId}::uuid`);
+      await transaction.execute(sql`UPDATE crm.employee_security_states SET access_state = 'active', credential_state = 'unready', temporary_password_expires_at = NULL, provider_reconciled_at = clock_timestamp(), updated_at = clock_timestamp(), version = version + 1 WHERE employee_id = ${reservation.employeeId}::uuid AND employment_epoch_id = ${reservation.employmentEpochId}::uuid`);
+      await transaction.execute(sql`UPDATE crm.employees SET contact_email = ${contactEmail}::text, email = ${contactEmail}::text, recovery_email = ${contactEmail}::text, current_employment_epoch_id = ${reservation.employmentEpochId}::uuid, updated_at = clock_timestamp(), version = version + 1 WHERE id = ${reservation.employeeId}::uuid`);
+      await transaction.execute(sql`UPDATE crm.security_outbox SET state = 'completed', completed_at = clock_timestamp() WHERE operation = 'provider_user_restore' AND aggregate_type = 'employment_epoch' AND aggregate_id = ${reservation.employmentEpochId}::uuid`);
       await writeSecurityAudit(transaction, { actorEmployeeId: actor.employeeId, action: "employee.rehired", entityType: "employee", entityId: reservation.employeeId, reason, after: { employmentEpochId: reservation.employmentEpochId } });
     }));
-    return { employeeId: reservation.employeeId, employmentEpochId: reservation.employmentEpochId, temporaryPassword: password };
+    return { employeeId: reservation.employeeId, employmentEpochId: reservation.employmentEpochId, provisioningState: "pending_activation" };
   }
 
   async unlockAccount(actor: Actor, employeeId: string, reason: string): Promise<void> {
+    if (actor.employeeId === employeeId) throw new AuthorizationError("SELF_ESCALATION_DENIED", "Нельзя разблокировать собственную учётную запись.");
     if (reason.trim() === "") throw new EmployeeServiceError("EMPLOYEE_CONFLICT", 422, false, "Укажите причину разблокировки.");
     await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
       await this.accessControl.requirePermission(transaction, actor, "employees.unlock", "all");
@@ -380,7 +615,7 @@ export class EmployeeService {
         WHERE security.employee_id = ${employeeId}::uuid
           AND security.access_state = 'active'
           AND epoch.state = 'active'
-          AND security.credential_state IN ('temporary_password', 'ready', 'password_change_required')
+          AND security.credential_state IN ('unready', 'temporary_password', 'ready', 'password_change_required')
         LIMIT 1
         FOR UPDATE OF security, epoch, binding
       `);
@@ -416,7 +651,7 @@ export class EmployeeService {
     await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
       await transaction.execute(sql`
         UPDATE crm.employee_security_states
-        SET credential_state = 'temporary_password', credential_epoch = credential_epoch + 1,
+        SET credential_state = 'temporary_password', temporary_password_expires_at = clock_timestamp() + interval '72 hours', credential_epoch = credential_epoch + 1,
             login_failure_count = 0, login_locked_until = NULL, updated_at = clock_timestamp(), version = version + 1
         WHERE employee_id = ${employeeId}::uuid AND employment_epoch_id = ${target.employmentEpochId}::uuid
       `);
@@ -426,6 +661,7 @@ export class EmployeeService {
   }
 
   async offboardEmployee(actor: Actor, input: OffboardEmployeeInput): Promise<void> {
+    if (actor.employeeId === input.employeeId) throw new AuthorizationError("SELF_ESCALATION_DENIED", "Нельзя оформить собственное увольнение.");
     if (input.reason.trim() === "") throw new EmployeeServiceError("EMPLOYEE_CONFLICT", 422, false, "Укажите причину увольнения.");
     await this.options.withDatabase(async (database) => database.transaction(async (transaction) => {
       await this.accessControl.requireSensitivePermission(transaction, actor, "employees.offboard");
@@ -457,9 +693,43 @@ export class EmployeeService {
           WHERE assigned_employee_id = ${input.employeeId}::uuid AND archived_at IS NULL AND converted_patient_id IS NULL
         `);
       }
+      if (input.confirmedNoReassignment && input.leadReplacementEmployeeId === undefined && leadCount > 0) {
+        await transaction.execute(sql`
+          INSERT INTO crm.unassigned_responsibilities (
+            id, category_code, entity_type, entity_id, previous_employee_id, reason
+          )
+          SELECT md5('unassigned-lead:' || lead.id::text)::uuid, 'leads'::text, 'lead'::text, lead.id,
+            ${input.employeeId}::uuid, ${input.reason.trim()}::text
+          FROM crm.leads AS lead
+          WHERE lead.assigned_employee_id = ${input.employeeId}::uuid
+            AND lead.archived_at IS NULL AND lead.converted_patient_id IS NULL
+          ON CONFLICT (category_code, entity_type, entity_id) WHERE resolved_at IS NULL DO NOTHING
+        `);
+        await transaction.execute(sql`
+          UPDATE crm.leads SET assigned_employee_id = NULL, updated_at = clock_timestamp(), version = version + 1
+          WHERE assigned_employee_id = ${input.employeeId}::uuid AND archived_at IS NULL AND converted_patient_id IS NULL
+        `);
+      }
       if (input.medicalCaseReplacementEmployeeId !== undefined) {
         await transaction.execute(sql`
           UPDATE crm.medical_cases SET responsible_employee_id = ${input.medicalCaseReplacementEmployeeId}::uuid, updated_at = clock_timestamp(), version = version + 1
+          WHERE responsible_employee_id = ${input.employeeId}::uuid AND archived_at IS NULL AND closed_at IS NULL
+        `);
+      }
+      if (input.confirmedNoReassignment && input.medicalCaseReplacementEmployeeId === undefined && caseCount > 0) {
+        await transaction.execute(sql`
+          INSERT INTO crm.unassigned_responsibilities (
+            id, category_code, entity_type, entity_id, previous_employee_id, reason
+          )
+          SELECT md5('unassigned-medical-case:' || medical_case.id::text)::uuid, 'medical_cases'::text, 'medicalCase'::text, medical_case.id,
+            ${input.employeeId}::uuid, ${input.reason.trim()}::text
+          FROM crm.medical_cases AS medical_case
+          WHERE medical_case.responsible_employee_id = ${input.employeeId}::uuid
+            AND medical_case.archived_at IS NULL AND medical_case.closed_at IS NULL
+          ON CONFLICT (category_code, entity_type, entity_id) WHERE resolved_at IS NULL DO NOTHING
+        `);
+        await transaction.execute(sql`
+          UPDATE crm.medical_cases SET responsible_employee_id = NULL, updated_at = clock_timestamp(), version = version + 1
           WHERE responsible_employee_id = ${input.employeeId}::uuid AND archived_at IS NULL AND closed_at IS NULL
         `);
       }

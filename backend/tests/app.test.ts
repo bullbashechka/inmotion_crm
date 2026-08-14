@@ -60,6 +60,53 @@ const authDependencies: AppDependencies = {
   },
 };
 
+const employeeDependencies: AppDependencies = {
+  ...authDependencies,
+  employeeService: {
+    async createEmployee() {
+      return { employeeId: testSession.employeeId, employmentEpochId: "00000000-0000-7000-8000-000000000013", provisioningState: "pending_activation" as const };
+    },
+    async listEmployees() {
+      return [{
+        id: testSession.employeeId,
+        fullName: "Алия Сарсенова",
+        login: "aliya.sarsenova",
+        roles: ["administrator"],
+        accessState: "active" as const,
+        credentialState: "ready",
+        temporaryPasswordExpiresAt: null,
+        lastSignInAt: "2026-08-13T00:00:00.000Z",
+        version: 1,
+      }];
+    },
+    async getEmployee() {
+      return {
+        id: testSession.employeeId,
+        fullName: "Алия Сарсенова",
+        login: "aliya.sarsenova",
+        roles: ["administrator"],
+        accessState: "active" as const,
+        credentialState: "ready",
+        temporaryPasswordExpiresAt: null,
+        lastSignInAt: "2026-08-13T00:00:00.000Z",
+        version: 1,
+        recoveryEmail: "aliya@example.test",
+        assignedRoles: [{ id: "00000000-0000-7000-8000-000000000401", code: "administrator", source: "Назначено руководителем" }],
+        effectivePermissions: [],
+        overrides: [],
+      };
+    },
+    async unlockAccount() {},
+    async issueTemporaryPassword() {
+      return { temporaryPassword: "T-example" };
+    },
+    async offboardEmployee() {},
+    async rehireEmployee() {
+      return { employeeId: testSession.employeeId, employmentEpochId: "00000000-0000-7000-8000-000000000013", provisioningState: "pending_activation" as const };
+    },
+  },
+};
+
 describe("system API", () => {
   test("loads the request-scoped database adapter without opening a connection", async () => {
     await expect(loadRequestDatabaseAdapter()).resolves.toMatchObject({ withRequestDatabase: expect.any(Function) });
@@ -147,7 +194,7 @@ describe("system API", () => {
     const response = await createApp(runtime, authDependencies).request("https://api.test/api/v1/auth/sign-in", {
       method: "POST",
       headers: { Origin: "http://localhost:5173", "Content-Type": "application/json" },
-      body: JSON.stringify({ login: "doctor@example.com", password: "password", attemptId: "00000000-0000-7000-8000-000000000014" }),
+      body: JSON.stringify({ login: "doctor.sarsenov", password: "password", attemptId: "00000000-0000-7000-8000-000000000014" }),
     });
 
     expect(response.status).toBe(200);
@@ -163,7 +210,7 @@ describe("system API", () => {
     const response = await createApp(runtime, authDependencies).request("https://api.test/api/v1/auth/sign-in", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ login: "doctor@example.com", password: "password", attemptId: "00000000-0000-7000-8000-000000000015" }),
+      body: JSON.stringify({ login: "doctor.sarsenov", password: "password", attemptId: "00000000-0000-7000-8000-000000000015" }),
     });
 
     expect(response.status).toBe(403);
@@ -177,6 +224,25 @@ describe("system API", () => {
     });
 
     expect(response.status).toBe(404);
+  });
+
+  test("returns only the authenticated user's permitted employee list and details", async () => {
+    const app = createApp(runtime, employeeDependencies);
+    const list = await app.request("https://api.test/api/v1/employees", {
+      headers: { Authorization: "Bearer " + "a".repeat(43) },
+    });
+    const detail = await app.request(`https://api.test/api/v1/employees/${testSession.employeeId}`, {
+      headers: { Authorization: "Bearer " + "a".repeat(43) },
+    });
+
+    expect(list.status).toBe(200);
+    expect(list.headers.get("Cache-Control")).toBe("no-store");
+    const listPayload = await list.json() as { employees: Array<Record<string, unknown>> };
+    expect(listPayload).toMatchObject({ employees: [{ login: "aliya.sarsenova" }] });
+    expect(listPayload.employees[0]).not.toHaveProperty("recoveryEmail");
+    expect(detail.status).toBe(200);
+    expect(detail.headers.get("Cache-Control")).toBe("no-store");
+    await expect(detail.json()).resolves.toMatchObject({ login: "aliya.sarsenova", recoveryEmail: "aliya@example.test" });
   });
 
   test("completes recovery server-side and keeps the one-time grant in an HttpOnly cookie", async () => {

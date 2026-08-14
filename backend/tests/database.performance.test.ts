@@ -17,7 +17,7 @@ describe("database foundation performance evidence", () => {
       await client.connect();
       try {
         await client.query(`
-          INSERT INTO crm.employees (id, full_name, email, created_at, updated_at) SELECT md5('employee-' || n)::uuid, 'Employee ' || n, 'employee' || n || '@example.test', now(), now() FROM generate_series(1, 100) n;
+          INSERT INTO crm.employees (id, full_name, email, recovery_email, created_at, updated_at) SELECT md5('employee-' || n)::uuid, 'Employee ' || n, 'employee' || n || '@example.test', 'employee' || n || '@example.test', now(), now() FROM generate_series(1, 100) n;
           INSERT INTO crm.services (id, code, name, delivery_mode, default_duration_minutes, default_price, created_at, updated_at) VALUES ('00000000-0000-7000-8000-000000000001', 'PERF', 'Performance', 'individual', 30, 0, now(), now());
           INSERT INTO crm.rooms (id, code, name, capacity, created_at, updated_at) SELECT md5('room-' || n)::uuid, 'R' || n, 'Room ' || n, 4, now(), now() FROM generate_series(1, 20) n;
           INSERT INTO crm.patients (id, family_name, given_name, phone, created_at, updated_at) SELECT md5('patient-' || n)::uuid, 'Family' || n, 'Given' || n, '+7000' || lpad(n::text, 7, '0'), now(), now() FROM generate_series(1, 50000) n;

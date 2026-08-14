@@ -68,9 +68,18 @@ export const AuthSessionSchema = z
 
 export type AuthSession = z.infer<typeof AuthSessionSchema>;
 
+export const UsernameSchema = z
+  .string()
+  .min(3)
+  .max(64)
+  .regex(/^[a-zA-Z0-9](?:[a-zA-Z0-9._-]{1,62}[a-zA-Z0-9])?$/, "Используйте 3–64 латинских символа, цифры, точку, дефис или подчёркивание.")
+  .openapi("Username");
+
+export const RecoveryEmailSchema = z.string().trim().toLowerCase().email().max(320).openapi("RecoveryEmail");
+
 export const SignInRequestSchema = z
   .object({
-    login: z.string().min(1).max(320),
+    login: UsernameSchema,
     password: z.string().min(1).max(1024),
     attemptId: z.string().uuid(),
   })
@@ -108,7 +117,7 @@ export const ChangePasswordRequestSchema = z
 export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequestSchema>;
 
 export const PasswordRecoveryRequestSchema = z
-  .object({ login: z.string().min(1).max(320) })
+  .object({ login: UsernameSchema })
   .strict()
   .openapi("PasswordRecoveryRequest");
 
@@ -124,8 +133,8 @@ export type PasswordRecoveryResetRequest = z.infer<typeof PasswordRecoveryResetR
 export const CreateEmployeeRequestSchema = z
   .object({
     fullName: z.string().min(1).max(200),
-    contactEmail: z.string().min(3).max(320),
-    login: z.string().min(3).max(320),
+    contactEmail: RecoveryEmailSchema,
+    login: UsernameSchema,
     roleId: z.string().uuid(),
     reason: z.string().min(1).max(500),
   })
@@ -138,13 +147,63 @@ export const CreateEmployeeResponseSchema = z
   .object({
     employeeId: z.string().uuid(),
     employmentEpochId: z.string().uuid(),
-    /** One-time-only value; callers must display it once and never persist it. */
-    temporaryPassword: z.string().min(16),
+    provisioningState: z.enum(["pending_activation", "provisioning"]),
   })
   .strict()
   .openapi("CreateEmployeeResponse");
 
 export type CreateEmployeeResponse = z.infer<typeof CreateEmployeeResponseSchema>;
+
+export const RecordScopeSchema = z
+  .object({ records: z.enum(["own", "assigned", "all"]) })
+  .strict()
+  .openapi("RecordScope");
+
+export type RecordScope = z.infer<typeof RecordScopeSchema>;
+
+export const EmployeeAccessStateSchema = z.enum([
+  "active",
+  "pending_activation",
+  "suspended",
+  "security_quarantined",
+  "terminated",
+]);
+export type EmployeeAccessState = z.infer<typeof EmployeeAccessStateSchema>;
+
+export const EmployeeListItemSchema = z.object({
+  id: z.string().uuid(),
+  fullName: z.string().min(1),
+  login: UsernameSchema.nullable(),
+  roles: z.array(z.string().min(1)),
+  accessState: EmployeeAccessStateSchema,
+  credentialState: z.string().min(1),
+  temporaryPasswordExpiresAt: z.string().datetime().nullable(),
+  lastSignInAt: z.string().datetime().nullable(),
+  version: z.number().int().positive(),
+}).strict();
+
+export type EmployeeListItem = z.infer<typeof EmployeeListItemSchema>;
+
+export const EffectivePermissionSchema = z.object({
+  permissionCode: z.string().min(1),
+  resourceFamily: z.string().min(1),
+  scope: z.enum(["own", "assigned", "all"]),
+  source: z.enum(["role", "override"]),
+  sourceLabel: z.string().min(1),
+  expiresAt: z.string().datetime().nullable(),
+}).strict();
+
+export const EmployeeDetailSchema = EmployeeListItemSchema.extend({
+  recoveryEmail: RecoveryEmailSchema,
+  assignedRoles: z.array(z.object({ id: z.string().uuid(), code: z.string().min(1), source: z.string().min(1) }).strict()),
+  effectivePermissions: z.array(EffectivePermissionSchema),
+  overrides: z.array(z.object({ permissionCode: z.string().min(1), mode: z.enum(["replace", "deny"]), scope: RecordScopeSchema.nullable(), expiresAt: z.string().datetime().nullable(), reason: z.string().min(1) }).strict()),
+}).strict();
+
+export type EmployeeDetail = z.infer<typeof EmployeeDetailSchema>;
+
+export const EmployeeListResponseSchema = z.object({ employees: z.array(EmployeeListItemSchema) }).strict();
+export type EmployeeListResponse = z.infer<typeof EmployeeListResponseSchema>;
 
 export const UnlockEmployeeRequestSchema = z
   .object({ reason: z.string().min(1).max(500) })
@@ -181,8 +240,8 @@ export type OffboardEmployeeRequest = z.infer<typeof OffboardEmployeeRequestSche
 
 export const RehireEmployeeRequestSchema = z
   .object({
-    contactEmail: z.string().min(3).max(320),
-    login: z.string().min(3).max(320),
+    contactEmail: RecoveryEmailSchema,
+    login: UsernameSchema,
     roleId: z.string().uuid(),
     reason: z.string().min(1).max(500),
   })
@@ -190,13 +249,6 @@ export const RehireEmployeeRequestSchema = z
   .openapi("RehireEmployeeRequest");
 
 export type RehireEmployeeRequest = z.infer<typeof RehireEmployeeRequestSchema>;
-
-export const RecordScopeSchema = z
-  .object({ records: z.enum(["own", "assigned", "all"]) })
-  .strict()
-  .openapi("RecordScope");
-
-export type RecordScope = z.infer<typeof RecordScopeSchema>;
 
 export const AssignRoleRequestSchema = z
   .object({ roleId: z.string().uuid(), reason: z.string().min(1).max(500) })
@@ -216,6 +268,7 @@ export const SetPermissionOverrideRequestSchema = z
   .object({
     mode: z.enum(["replace", "deny"]),
     scope: RecordScopeSchema.optional(),
+    expiresAt: z.string().datetime().optional(),
     reason: z.string().min(1).max(500),
   })
   .strict()

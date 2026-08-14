@@ -39,7 +39,7 @@ Brand signals retained from the clinic:
 
 The Instagram feed is a brand reference, not a direct UI theme. The CRM uses a light working canvas because staff will read and edit dense information for long periods.
 
-External references influence modular composition, spacing, and card hierarchy only. Do not copy their branding, layouts, or color systems literally.
+External references influence modular composition, spacing, and card hierarchy only. Do not copy their branding, layouts, or color systems literally. The approved task-004 reference at `docs/assets/task-004-employees-access-reference.png` is specifically the composition target for the employee and access screen.
 
 ## 4. Application shell and layout
 
@@ -309,7 +309,9 @@ Common assignments:
 
 ## 10. Icons and imagery
 
-- Use one consistent outline icon family: Phosphor Icons, regular weight.
+- Use one consistent outline icon family: Lucide, regular stroke. It is the
+  installed application icon set; do not add a second icon dependency solely
+  for visual parity with a reference.
 - Standard icon sizes: `16`, `20`, and `24px`.
 - Icons are always SVG/vector; emojis are forbidden as interface icons.
 - Icon-only buttons require an accessible name and at least a `44 × 44px` hit area.

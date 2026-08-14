@@ -3,11 +3,15 @@ import {
   AuthSessionSchema,
   ChangePasswordRequestSchema,
   ContinueSessionResponseSchema,
+  EmployeeDetailSchema,
+  EmployeeListResponseSchema,
   PasswordRecoveryRequestSchema,
   PasswordRecoveryResetRequestSchema,
   SignInRequestSchema,
   SignInResponseSchema,
   type AuthSession,
+  type EmployeeDetail,
+  type EmployeeListResponse,
   type SignInRequest,
 } from "@inmotion-crm/contracts";
 
@@ -67,6 +71,18 @@ export class AuthClient {
     const response = await this.authorizedFetch("/api/v1/auth/session", { method: "GET" });
     if (!response.ok) return readError(response);
     return ContinueSessionResponseSchema.parse(await response.json()).session;
+  }
+
+  async getEmployees(): Promise<EmployeeListResponse> {
+    const response = await this.authorizedFetch("/api/v1/employees", { method: "GET" });
+    if (!response.ok) return readError(response);
+    return EmployeeListResponseSchema.parse(await response.json());
+  }
+
+  async getEmployee(employeeId: string): Promise<EmployeeDetail> {
+    const response = await this.authorizedFetch(`/api/v1/employees/${employeeId}`, { method: "GET" });
+    if (!response.ok) return readError(response);
+    return EmployeeDetailSchema.parse(await response.json());
   }
 
   async continueSession(): Promise<AuthSession> {

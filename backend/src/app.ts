@@ -6,6 +6,8 @@ import {
   ContinueSessionResponseSchema,
   CreateEmployeeRequestSchema,
   CreateEmployeeResponseSchema,
+  EmployeeDetailSchema,
+  EmployeeListResponseSchema,
   IssueTemporaryPasswordRequestSchema,
   IssueTemporaryPasswordResponseSchema,
   OffboardEmployeeRequestSchema,
@@ -48,7 +50,7 @@ export type RuntimeConfig = {
 
 export type AppDependencies = {
   authService?: Pick<AuthService, "authenticate" | "signIn" | "refreshSession" | "continueSession" | "revokeSession" | "changePassword" | "requestPasswordRecovery" | "completePasswordRecovery" | "resetPasswordWithRecoveryGrant">;
-  employeeService?: Pick<EmployeeService, "createEmployee" | "unlockAccount" | "issueTemporaryPassword" | "offboardEmployee" | "rehireEmployee">;
+  employeeService?: Pick<EmployeeService, "createEmployee" | "listEmployees" | "getEmployee" | "unlockAccount" | "issueTemporaryPassword" | "offboardEmployee" | "rehireEmployee">;
   roleService?: Pick<RoleService, "assignRole" | "revokeRole" | "setEmployeePermissionOverride" | "publishRoleRevision">;
 };
 
@@ -155,9 +157,26 @@ const createEmployeeRoute = createRoute({
   path: "/api/v1/employees",
   request: { body: { content: { "application/json": { schema: CreateEmployeeRequestSchema } } } },
   responses: {
-    201: { content: { "application/json": { schema: CreateEmployeeResponseSchema } }, description: "Сотрудник создан, временный пароль выдан один раз" },
+    201: { content: { "application/json": { schema: CreateEmployeeResponseSchema } }, description: "Сотрудник создан и ожидает выдачи временного пароля" },
     403: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Недостаточно прав" },
     409: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Конфликт учётной записи" },
+  },
+});
+
+const listEmployeesRoute = createRoute({
+  method: "get",
+  path: "/api/v1/employees",
+  responses: {
+    200: { content: { "application/json": { schema: EmployeeListResponseSchema } }, description: "Список сотрудников, доступный текущему пользователю" },
+  },
+});
+
+const employeeDetailRoute = createRoute({
+  method: "get",
+  path: "/api/v1/employees/{employeeId}",
+  request: { params: z.object({ employeeId: z.string().uuid() }) },
+  responses: {
+    200: { content: { "application/json": { schema: EmployeeDetailSchema } }, description: "Карточка сотрудника и итоговые права" },
   },
 });
 
@@ -470,6 +489,35 @@ export function createApp(config: RuntimeConfig, dependencies: AppDependencies =
       const created = await employeeService.createEmployee({ employeeId: authenticated.employeeId, employmentEpochId: authenticated.employmentEpochId }, context.req.valid("json"));
       context.header("Cache-Control", "no-store");
       return context.json(created, 201);
+    } catch (error) {
+      return employeeError(context, error);
+    }
+  });
+
+  registerRoute(app, listEmployeesRoute, { access: "crm_session", requiresOrigin: false }, async (context) => {
+    const employeeService = dependencies.employeeService;
+    const authenticated = context.get("authenticated");
+    if (employeeService === undefined || authenticated === undefined) return employeeServiceUnavailable(context);
+    try {
+      const employees = await employeeService.listEmployees({ employeeId: authenticated.employeeId, employmentEpochId: authenticated.employmentEpochId });
+      context.header("Cache-Control", "no-store");
+      return context.json({ employees }, 200);
+    } catch (error) {
+      return employeeError(context, error);
+    }
+  });
+
+  registerRoute(app, employeeDetailRoute, { access: "crm_session", requiresOrigin: false }, async (context) => {
+    const employeeService = dependencies.employeeService;
+    const authenticated = context.get("authenticated");
+    if (employeeService === undefined || authenticated === undefined) return employeeServiceUnavailable(context);
+    try {
+      const employee = await employeeService.getEmployee(
+        { employeeId: authenticated.employeeId, employmentEpochId: authenticated.employmentEpochId },
+        context.req.valid("param").employeeId,
+      );
+      context.header("Cache-Control", "no-store");
+      return context.json(employee, 200);
     } catch (error) {
       return employeeError(context, error);
     }
