@@ -17,6 +17,8 @@ Act as the project's staff-level product engineer. Own the architecture, impleme
 
 The user owns product intent. Own routine technical decisions when repository evidence supports a safe choice. Communicate in plain language and focus on product effects, meaningful tradeoffs, risks, validation, and required user actions.
 
+When user action is unavoidable, provide short exact steps, the expected result, and the next recovery step if something fails. When feedback is vague, translate it into an observable product or technical gap before changing code, and frame clarification questions in product terms whenever possible.
+
 ## Instruction Priority
 
 Follow system, developer, and user instructions first, then the nearest applicable repository instructions. More specific task documentation overrides general repository guidance when the two are compatible with higher-priority instructions.
@@ -91,6 +93,8 @@ bun run --cwd packages/contracts test
 
 Prefer existing utilities, framework APIs, and the standard library before adding dependencies. Inspect the relevant `package.json` before using a library. Do not add a new production or tooling dependency without explicit user approval unless the user directly requested that dependency by name.
 
+When proposing a missing dependency, explain its user-visible benefit and its maintenance and security impact before requesting approval.
+
 ## Repository Grounding
 
 Start from repository evidence, not assumptions.
@@ -98,13 +102,19 @@ Start from repository evidence, not assumptions.
 For non-trivial work:
 
 - Read the applicable task specification, relevant product requirements, and nearby implementation notes early.
-- Discover the current structure with `rg --files` rather than treating documentation as a file inventory.
+- When code discovery is needed, keep the main process focused on decisions and implementation; delegate broad repository search to a Codex 5.3 Spark subagent when available, and use a Codex 5.3 subagent when Spark is unavailable.
+- The subagent must return a compact evidence map only: `path:line`, symbol/component/route name, the relevant code snippet or signature, and why it matters for the main task.
+- The main process should use that map for targeted reading and implementation, verifying critical findings before editing.
 - Inspect the vertical path from the user-facing caller to the owning backend or persistence boundary.
 - Check sibling modules, related contracts, tests, and existing patterns before introducing a new pattern.
 - Trust current code, tests, configuration, and runtime output over stale documentation.
 - Check local dependency types or current official documentation before relying on uncertain framework behavior.
 
 Do enough research to find the owning layer. Do not turn research into unrelated cleanup or broad exploration.
+
+## Search Discipline
+
+For lookup tasks, do not begin with repository-wide or app-wide content search for generic terms. Start in the expected code area by convention and try direct path guesses before searching. If that fails, use a narrow path or filename search in that root. If the subtree is still unclear, use one shallow directory-only tree there, then keep all further search inside the chosen subtree unless it clearly fails. Use scoped content search only after those cheaper structural steps fail, and treat whole-repository keyword search as a last resort. After a likely file or match is found, use line-oriented search and open only one small numbered window around the relevant lines; do not read broad file ranges or reopen the same file just to add line numbers unless the narrow window is insufficient. Stop once the owning file or module and one direct link to the target are confirmed. For simple lookup tasks, do not narrate the search unless the user asks for it; answer with only the minimal supporting references. For implementation lookup, code is the primary source of truth; docs, TODOs, lockfiles, generated files, artifacts, and tests are fallback sources unless the task explicitly targets them.
 
 ## Task Modes
 
@@ -192,6 +202,7 @@ Check loading, empty, error, success, disabled, retry, stale-data, and recovery 
 - Delete obsolete escape hatches only when the replacement is complete and the deletion is within the requested scope.
 - Do not manually edit generated files. Change the source and run the owning generator.
 - Keep diffs focused and avoid unrelated formatting churn.
+- When re-architecture or a migration is necessary, state the affected scope, risks, backward-compatibility requirements, rollout order, and rollback path before implementation.
 
 ## Change-Surface Triggers
 
@@ -237,6 +248,16 @@ Test externally observable behavior, validation failures, authorization boundari
 
 Treat non-zero exits, runtime errors, unhandled promise rejections, failed assertions, type errors, lint errors, build failures, and timeouts as failed validation. If a check cannot run, state why and identify the best available substitute signal.
 
+### Playwright E2E
+
+- Use Playwright Test for browser end-to-end coverage when required by the applicable task specification; task 024 owns the full release-quality E2E setup unless an earlier task explicitly requires a critical flow sooner.
+- Cover stable, user-visible, cross-layer behavior whose regression would materially harm the product, including the critical workflows named in `tasks/024-quality-cicd-release.md`. Do not use E2E to retest cosmetic details or behavior already proven more cheaply at a lower boundary.
+- Prefer accessible, user-facing locators such as role, label, and visible text. Use stable test IDs only when no suitable user-facing contract exists. Avoid CSS/XPath chains and selectors coupled to implementation details.
+- Use Playwright locators, auto-waiting, and web-first assertions. Do not use fixed sleeps, arbitrary timeout increases, or manual polling to hide synchronization problems.
+- Keep tests isolated and independently runnable with controlled synthetic data. Do not depend on test order, shared mutable accounts, production data, or live third-party services; mock external providers at the network boundary when appropriate.
+- Preserve useful failure evidence with traces on the first retry and screenshots on failure. Retries may collect diagnostics but must not be used to classify a flaky test as healthy; report and fix the source of flakiness.
+- Derive the browser, viewport, environment, and data matrix from the applicable task and product requirements. When the Playwright infrastructure is introduced, add canonical Bun scripts and document the local and CI commands.
+
 ## Database and Data Integrity
 
 - Follow the applicable database task specification before introducing persistence code or migrations.
@@ -257,6 +278,7 @@ Do not create documentation churn for trivial refactors or self-evident code. If
 
 - Inspect `git status --short --branch` before edits that may overlap existing work.
 - Inspect `git remote -v` before branch, commit, push, pull request, or deployment workflows.
+- Before deployment or cloud-resource changes, verify the remote, worktree status, exact deployment configuration, and target branch or commit. If the release source or target environment is ambiguous, stop and report the blocker.
 - Do not create or switch branches unless explicitly requested.
 - Do not remove or replace remotes automatically.
 - Do not stage, commit, amend, rebase, reset, stash, push, create pull requests, or delete files unless explicitly asked.
@@ -269,6 +291,7 @@ Pull requests must state the task number, summarize behavior and risks, list exa
 
 ## Security and Configuration
 
+- Never read `.env` or `.dev.vars` files.
 - Copy `webapp/.env.example` to `webapp/.env` for local public configuration.
 - Use `backend/.dev.vars.example` for local Worker configuration.
 - Never put secrets in `VITE_*` variables or any browser-accessible bundle.

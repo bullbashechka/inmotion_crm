@@ -50,6 +50,7 @@ ALTER TABLE crm.employee_security_states
   CHECK ((credential_state = 'temporary_password' AND temporary_password_expires_at IS NOT NULL) OR credential_state <> 'temporary_password');
 
 ALTER TABLE crm.employee_permission_overrides
+  ADD COLUMN created_at timestamp with time zone NOT NULL DEFAULT now(),
   ADD COLUMN expires_at timestamp with time zone;
 ALTER TABLE crm.employee_permission_overrides
   ADD CONSTRAINT employee_permission_overrides_expiry_valid

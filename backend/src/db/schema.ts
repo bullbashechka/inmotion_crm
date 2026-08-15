@@ -245,6 +245,7 @@ export const employeePermissionOverrides = crm.table("employee_permission_overri
   scope: jsonb("scope"),
   grantedByEmployeeId: uuid("granted_by_employee_id").references(() => employees.id, { onDelete: "restrict" }),
   reason: text("reason").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
   revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
   version: integer("version").notNull().default(1),
