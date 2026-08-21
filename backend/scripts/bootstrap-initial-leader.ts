@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Client } from "pg";
 
 import { EmployeeService } from "../src/access/employees";
+import { createAuthTokenCipher } from "../src/auth/crypto";
 import { SupabaseAuthProvider } from "../src/auth/provider";
 import { parseRuntimeConfig } from "../src/config";
 import * as schema from "../src/db/schema";
@@ -26,6 +27,7 @@ try {
       anonKey: config.auth.providerAnonKey,
       serviceRoleKey: config.auth.providerServiceRoleKey,
     }),
+    tokenCipher: await createAuthTokenCipher(config.auth.tokenEncryptionKey),
     providerNamespace: config.auth.providerNamespace,
   });
   const created = await service.bootstrapInitialLeader({

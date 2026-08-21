@@ -34,8 +34,16 @@ export function parseClientRuntimeConfig(
     throw new Error("VITE_CLIENT_VERSION обязателен.");
   }
 
+  const parsedApiUrl = new URL(apiUrl);
+  if (!/^https?:$/u.test(parsedApiUrl.protocol) || parsedApiUrl.username !== "" || parsedApiUrl.password !== "" || parsedApiUrl.search !== "" || parsedApiUrl.hash !== "" || (parsedApiUrl.pathname !== "" && parsedApiUrl.pathname !== "/")) {
+    throw new Error("VITE_API_URL должен быть origin HTTP(S) без учётных данных, пути, query или hash.");
+  }
+  if (parsedEnvironment.data === "production" && parsedApiUrl.protocol !== "https:") {
+    throw new Error("Production VITE_API_URL должен использовать HTTPS.");
+  }
+
   return {
-    apiUrl,
+    apiUrl: parsedApiUrl.origin,
     environment: parsedEnvironment.data,
     clientVersion,
   };

@@ -4,15 +4,31 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-06",
   "compatibility_flags": ["nodejs_compat"],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE_FRESH",
       "id": "00000000000000000000000000000000"
     }
   ],
+  "ratelimits": [
+    {
+      "name": "AUTH_IDENTITY_RATE_LIMITER",
+      "namespace_id": "26101",
+      "simple": { "limit": 5, "period": 60 }
+    },
+    {
+      "name": "AUTH_SOURCE_RATE_LIMITER",
+      "namespace_id": "26102",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
   "observability": {
     "enabled": true,
     "logs": {
+      "invocation_logs": false,
       "head_sampling_rate": 1
     }
   },

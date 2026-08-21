@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiRequestError, getSystemHealth } from "../src/lib/api";
+import { AuthClient } from "../src/lib/auth";
 
 describe("getSystemHealth", () => {
   it("sends the client version and parses the shared health contract", async () => {
@@ -46,5 +47,31 @@ describe("getSystemHealth", () => {
     await expect(getSystemHealth("http://localhost:8787", "dev")).rejects.toBeInstanceOf(
       ApiRequestError,
     );
+  });
+});
+
+describe("AuthClient", () => {
+  it("does not hide a server-side refresh conflict with client polling", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        code: "REFRESH_IN_PROGRESS",
+        message: "Сессия уже продлевается.",
+        correlationId: "00000000-0000-7000-8000-000000000040",
+        retryable: true,
+      }), { status: 409 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new AuthClient("https://api.test").restore()).rejects.toBeInstanceOf(ApiRequestError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat an intermediary 401 as confirmed logout", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "AUTHENTICATION_REQUIRED",
+      message: "Выход не подтверждён.",
+      correlationId: "00000000-0000-7000-8000-000000000043",
+      retryable: true,
+    }), { status: 401 })));
+
+    await expect(new AuthClient("https://api.test").logout()).rejects.toBeInstanceOf(ApiRequestError);
   });
 });

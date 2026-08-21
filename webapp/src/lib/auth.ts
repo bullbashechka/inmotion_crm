@@ -122,10 +122,14 @@ export class AuthClient {
   }
 
   async logout(): Promise<void> {
-    if (this.accessToken === null) return;
-    const response = await this.authorizedFetch("/api/v1/auth/logout", { method: "POST" });
+    const headers = this.accessToken === null ? undefined : { Authorization: `Bearer ${this.accessToken}` };
+    const response = await fetch(endpoint(this.apiUrl, "/api/v1/auth/logout"), {
+      method: "POST",
+      credentials: "include",
+      headers,
+    });
+    if (!response.ok) return readError(response);
     this.accessToken = null;
-    if (!response.ok && response.status !== 401) return readError(response);
   }
 
   clearMemory(): void {

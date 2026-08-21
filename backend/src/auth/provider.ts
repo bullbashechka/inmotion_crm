@@ -18,6 +18,7 @@ export type ProviderSignInResult =
 export type AuthProvider = {
   signInWithPassword(input: { login: string; password: string }): Promise<ProviderSignInResult>;
   refreshSession(refreshToken: string): Promise<ProviderSignInResult>;
+  revokeSession(accessToken: string): Promise<"revoked" | "unavailable">;
   updatePassword(input: { subjectId: string; password: string }): Promise<"updated" | "unavailable">;
   restoreUser(input: { subjectId: string; password: string; marker: string }): Promise<"restored" | "unavailable">;
   banUser(subjectId: string): Promise<"banned" | "unavailable">;
@@ -101,6 +102,21 @@ export class SupabaseAuthProvider implements AuthProvider {
 
   async refreshSession(refreshToken: string): Promise<ProviderSignInResult> {
     return this.requestToken("refresh_token", { refresh_token: refreshToken });
+  }
+
+  async revokeSession(accessToken: string): Promise<"revoked" | "unavailable"> {
+    try {
+      const response = await fetch(`${this.#baseUrl}/auth/v1/logout?scope=local`, {
+        method: "POST",
+        headers: {
+          ...this.anonHeaders(),
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      return response.ok ? "revoked" : "unavailable";
+    } catch {
+      return "unavailable";
+    }
   }
 
   async updatePassword(input: { subjectId: string; password: string }): Promise<"updated" | "unavailable"> {

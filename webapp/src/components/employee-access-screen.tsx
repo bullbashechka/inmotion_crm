@@ -26,6 +26,8 @@ import { Alert } from "./ui/alert";
 
 type EmployeeAccessScreenProps = {
   authClient: AuthClient;
+  sessionId: string;
+  onLogout: () => void;
   sessionWarning: React.ReactNode;
 };
 
@@ -92,14 +94,14 @@ function humanPermission(code: string): string {
   return labels[code] ?? code;
 }
 
-export function EmployeeAccessScreen({ authClient, sessionWarning }: EmployeeAccessScreenProps) {
+export function EmployeeAccessScreen({ authClient, sessionId, onLogout, sessionWarning }: EmployeeAccessScreenProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [panelOpen, setPanelOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<"profile" | "permissions" | "history">("permissions");
 
   const employeesQuery = useQuery({
-    queryKey: ["employees"],
+    queryKey: ["employees", sessionId],
     queryFn: () => authClient.getEmployees(),
   });
   const employees = employeesQuery.data?.employees ?? emptyEmployees;
@@ -112,7 +114,7 @@ export function EmployeeAccessScreen({ authClient, sessionWarning }: EmployeeAcc
   const activeSelectedId = selectedId ?? employees[0]?.id ?? null;
 
   const detailQuery = useQuery({
-    queryKey: ["employee", activeSelectedId],
+    queryKey: ["employee", sessionId, activeSelectedId],
     queryFn: () => authClient.getEmployee(activeSelectedId!),
     enabled: activeSelectedId !== null && panelOpen,
   });
@@ -147,8 +149,8 @@ export function EmployeeAccessScreen({ authClient, sessionWarning }: EmployeeAcc
               <a className="flex h-10 items-center gap-3 px-3 text-sm text-white/80 hover:text-white" href="#workspace"><ClipboardList aria-hidden="true" size={19} />Аудит</a>
             </div>
           </nav>
-          <button className="mt-auto flex h-11 items-center gap-3 rounded-lg px-3 text-sm text-white/80 hover:bg-white/10 hover:text-white" type="button">
-            <PanelLeftClose aria-hidden="true" size={20} />Свернуть
+          <button className="mt-auto flex h-11 items-center gap-3 rounded-lg px-3 text-sm text-white/80 hover:bg-white/10 hover:text-white" onClick={onLogout} type="button">
+            <PanelLeftClose aria-hidden="true" size={20} />Выйти
           </button>
         </aside>
 
@@ -163,8 +165,8 @@ export function EmployeeAccessScreen({ authClient, sessionWarning }: EmployeeAcc
               <span className="absolute right-1.5 top-1.5 grid size-4 place-items-center rounded-full bg-blue text-[10px] font-semibold text-white">3</span>
             </button>
             <div className="flex items-center gap-2 border-l border-line pl-4">
-              <span className="grid size-9 place-items-center rounded-full bg-blue/10 text-xs font-bold text-blue">КС</span>
-              <div className="hidden text-sm leading-tight sm:block"><p className="font-semibold">Кирилл Саидашев</p><p className="text-xs text-muted">Руководитель</p></div>
+              <span className="grid size-9 place-items-center rounded-full bg-blue/10 text-xs font-bold text-blue">CRM</span>
+              <div className="hidden text-sm leading-tight sm:block"><p className="font-semibold">Текущая сессия</p><p className="text-xs text-muted">Защищённый доступ</p></div>
             </div>
           </header>
 

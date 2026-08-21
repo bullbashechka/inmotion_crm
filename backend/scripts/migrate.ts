@@ -41,8 +41,11 @@ async function assertMigrationRole(client: Client): Promise<void> {
   }
 }
 
-export async function migrate(databaseUrl = requiredDatabaseUrl(process.env.DATABASE_MIGRATION_URL)): Promise<void> {
-  const migrations = await loadMigrations();
+export async function migrate(databaseUrl = requiredDatabaseUrl(process.env.DATABASE_MIGRATION_URL), options: { through?: string } = {}): Promise<void> {
+  const catalog = await loadMigrations();
+  const throughIndex = options.through === undefined ? catalog.length - 1 : catalog.findIndex((migration) => migration.filename === options.through);
+  if (throughIndex < 0) throw new Error(`Unknown migration boundary: ${options.through}.`);
+  const migrations = catalog.slice(0, throughIndex + 1);
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
   try {

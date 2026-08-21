@@ -4,10 +4,11 @@ dist/
 **/dist/
 .wrangler/
 **/.wrangler/
-.dev.vars
-**/.dev.vars
-.env
-**/.env
+**/.dev.vars*
+!**/.dev.vars.example
+**/.env*
+!**/.env.example
+supabase/.temp/
 coverage/
 playwright-report/
 test-results/

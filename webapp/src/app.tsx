@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppEnvironment, SystemHealthResponse } from "@inmotion-crm/contracts";
 
 import { EnvironmentBanner } from "./components/environment-banner";
@@ -18,6 +18,7 @@ type AppProps = {
 };
 
 export function App({ clientEnvironment, loadHealth, authClient }: AppProps) {
+  const queryClient = useQueryClient();
   const healthQuery = useQuery({
     queryKey: ["system-health"],
     queryFn: loadHealth,
@@ -35,14 +36,39 @@ export function App({ clientEnvironment, loadHealth, authClient }: AppProps) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [now, setNow] = useState(0);
   const [recoveryCompleted, setRecoveryCompleted] = useState(false);
+  const authChannel = useRef<BroadcastChannel | null>(null);
+  const authGeneration = useRef(0);
   const recoveryResetRoute = typeof window !== "undefined" && window.location.pathname === "/recovery/reset";
+
+  const clearPrivateState = useCallback((message?: string) => {
+    authGeneration.current += 1;
+    queryClient.cancelQueries();
+    queryClient.clear();
+    authClient?.clearMemory();
+    setSession(null);
+    if (message !== undefined) setAuthError(message);
+  }, [authClient, queryClient]);
+
+  useEffect(() => {
+    if (authClient === undefined || typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel("inmotion-auth");
+    authChannel.current = channel;
+    channel.addEventListener("message", (event: MessageEvent<unknown>) => {
+      if (event.data === "logout") clearPrivateState();
+    });
+    return () => {
+      authChannel.current = null;
+      channel.close();
+    };
+  }, [authClient, clearPrivateState]);
 
   useEffect(() => {
     if (authClient === undefined) return;
     let active = true;
+    const generation = authGeneration.current;
     void authClient.restore()
       .then((restored) => {
-        if (active) {
+        if (active && authGeneration.current === generation) {
           setSession(restored);
           setNow(Date.now());
         }
@@ -67,9 +93,7 @@ export function App({ clientEnvironment, loadHealth, authClient }: AppProps) {
       if (!active) return;
       setNow(observedNow);
       if (idleExpiresAt <= observedNow || absoluteExpiresAt <= observedNow) {
-        authClient.clearMemory();
-        setSession(null);
-        setAuthError("Сессия завершена из-за бездействия. Войдите снова.");
+        clearPrivateState("Сессия завершена из-за бездействия. Войдите снова.");
         return;
       }
       void authClient.currentSession()
@@ -78,8 +102,7 @@ export function App({ clientEnvironment, loadHealth, authClient }: AppProps) {
         })
         .catch(() => {
           if (!active) return;
-          authClient.clearMemory();
-          setSession(null);
+          clearPrivateState("Сессия завершена. Войдите снова.");
         });
     };
     const interval = window.setInterval(updateSessionClock, 30_000);
@@ -89,7 +112,31 @@ export function App({ clientEnvironment, loadHealth, authClient }: AppProps) {
       window.clearInterval(interval);
       window.clearTimeout(warningTimeout);
     };
-  }, [authClient, session]);
+  }, [authClient, clearPrivateState, session]);
+
+  useEffect(() => {
+    if (session === null || authClient === undefined) return;
+    let active = true;
+    const revalidate = () => {
+      if (document.visibilityState !== "visible") return;
+      void authClient.currentSession()
+        .then((current) => {
+          if (active) setSession(current);
+        })
+        .catch(() => {
+          if (active) clearPrivateState("Сессия завершена. Войдите снова.");
+        });
+    };
+    window.addEventListener("focus", revalidate);
+    window.addEventListener("pageshow", revalidate);
+    document.addEventListener("visibilitychange", revalidate);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", revalidate);
+      window.removeEventListener("pageshow", revalidate);
+      document.removeEventListener("visibilitychange", revalidate);
+    };
+  }, [authClient, clearPrivateState, session]);
 
   const isSessionWarning = session !== null && (session.state === "warning" || new Date(session.warningAt).getTime() <= now);
   const passwordChangeRequired = session?.state === "password_change_required";
@@ -141,10 +188,25 @@ export function App({ clientEnvironment, loadHealth, authClient }: AppProps) {
     setAuthError(null);
     try {
       await authClient.changePassword(input);
-      setSession(null);
-      setAuthError("Пароль изменён. Войдите с новым паролем.");
+      clearPrivateState("Пароль изменён. Войдите с новым паролем.");
+      authChannel.current?.postMessage("logout");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Не удалось сменить пароль.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function logout() {
+    if (authClient === undefined) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      await authClient.logout();
+      clearPrivateState();
+      authChannel.current?.postMessage("logout");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Не удалось подтвердить выход. Повторите попытку.");
     } finally {
       setAuthBusy(false);
     }
@@ -172,6 +234,8 @@ export function App({ clientEnvironment, loadHealth, authClient }: AppProps) {
     if (session === null) return <LoginForm busy={authBusy} error={authError} onRecovery={requestRecovery} onSubmit={signIn} />;
     return <EmployeeAccessScreen
       authClient={authClient}
+      sessionId={session.id}
+      onLogout={logout}
       sessionWarning={
         <>
           {isSessionWarning ? (

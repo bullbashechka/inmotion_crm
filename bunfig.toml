@@ -1,2 +1,8 @@
 [install]
 linker = "isolated"
+
+# 2.5 weeks = 1,512,000 seconds
+minimumReleaseAge = 1512000
+
+# Do not add exceptions unless absolutely necessary:
+# minimumReleaseAgeExcludes = ["@types/node"]

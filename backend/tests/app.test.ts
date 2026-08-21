@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createApp, type AppDependencies } from "../src/app";
 import worker, { loadRequestDatabaseAdapter } from "../src/index";
@@ -21,7 +21,13 @@ const testSession = {
   revision: 1,
 };
 
+const allowAuthRateLimiters = {
+  identity: { async limit() { return { success: true }; } },
+  source: { async limit() { return { success: true }; } },
+};
+
 const authDependencies: AppDependencies = {
+  authRateLimiters: allowAuthRateLimiters,
   authService: {
     async authenticate() {
       return {
@@ -51,6 +57,7 @@ const authDependencies: AppDependencies = {
       return testSession;
     },
     async revokeSession() {},
+    async revokeSessionByRefreshToken() {},
     async changePassword() {},
     async requestPasswordRecovery() {},
     async completePasswordRecovery() {
@@ -178,6 +185,8 @@ describe("system API", () => {
       }) as never,
       {
         HYPERDRIVE_FRESH: {} as Hyperdrive,
+        AUTH_IDENTITY_RATE_LIMITER: allowAuthRateLimiters.identity,
+        AUTH_SOURCE_RATE_LIMITER: allowAuthRateLimiters.source,
         APP_ENV: "local",
         APP_BUILD_VERSION: "dev",
         SUPPORTED_CLIENT_VERSIONS: "dev",
@@ -206,6 +215,55 @@ describe("system API", () => {
     });
   });
 
+  test("revokes the cookie session even when a stale access token is also present", async () => {
+    const revokeSession = vi.fn(async () => {});
+    const revokeSessionByRefreshToken = vi.fn(async () => {});
+    const dependencies: AppDependencies = {
+      authRateLimiters: allowAuthRateLimiters,
+      authService: {
+        ...authDependencies.authService!,
+        revokeSession,
+        revokeSessionByRefreshToken,
+      },
+    };
+    const response = await createApp(runtime, dependencies).request("https://api.test/api/v1/auth/logout", {
+      method: "POST",
+      headers: {
+        Origin: "http://localhost:5173",
+        Authorization: "Bearer " + "z".repeat(43),
+        Cookie: "__Host-inmotion-refresh=" + "b".repeat(43),
+      },
+    });
+
+    expect(response.status).toBe(204);
+    expect(revokeSessionByRefreshToken).toHaveBeenCalledWith("b".repeat(43));
+    expect(revokeSession).not.toHaveBeenCalled();
+    expect(response.headers.get("Set-Cookie")).toBe("__Host-inmotion-refresh=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict");
+  });
+
+  test("retains the refresh capability when server-side logout was not confirmed", async () => {
+    const dependencies: AppDependencies = {
+      authRateLimiters: allowAuthRateLimiters,
+      authService: {
+        ...authDependencies.authService!,
+        revokeSessionByRefreshToken: vi.fn(async () => {
+          throw new Error("database unavailable");
+        }),
+      },
+    };
+    const response = await createApp(runtime, dependencies).request("https://api.test/api/v1/auth/logout", {
+      method: "POST",
+      headers: {
+        Origin: "http://localhost:5173",
+        Cookie: "__Host-inmotion-refresh=" + "b".repeat(43),
+      },
+    });
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+
   test("rejects browser mutations without an exact Origin before they reach Auth", async () => {
     const response = await createApp(runtime, authDependencies).request("https://api.test/api/v1/auth/sign-in", {
       method: "POST",
@@ -215,6 +273,38 @@ describe("system API", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ code: "ORIGIN_FORBIDDEN" });
+  });
+
+  test("rejects oversized auth bodies before validation or provider access", async () => {
+    const response = await createApp(runtime, authDependencies).request("https://api.test/api/v1/auth/sign-in", {
+      method: "POST",
+      headers: { Origin: "http://localhost:5173", "Content-Type": "application/json" },
+      body: "x".repeat(16_385),
+    });
+
+    expect(response.status).toBe(413);
+    expect(response.headers.get("X-Correlation-ID")).toMatch(/^[0-9a-f-]{36}$/iu);
+    await expect(response.json()).resolves.toMatchObject({ code: "REQUEST_BODY_TOO_LARGE" });
+  });
+
+  test("rate limits sign-in by canonical identity before provider access", async () => {
+    const signIn = vi.fn(authDependencies.authService!.signIn);
+    const response = await createApp(runtime, {
+      authService: { ...authDependencies.authService!, signIn },
+      authRateLimiters: {
+        identity: { async limit() { return { success: false }; } },
+        source: allowAuthRateLimiters.source,
+      },
+    }).request("https://api.test/api/v1/auth/sign-in", {
+      method: "POST",
+      headers: { Origin: "http://localhost:5173", "Content-Type": "application/json" },
+      body: JSON.stringify({ login: "Doctor.Sarsenov", password: "password", attemptId: "00000000-0000-7000-8000-000000000019" }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("60");
+    expect(signIn).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ code: "AUTH_RATE_LIMITED" });
   });
 
   test("exposes only BFF-owned Auth routes and no generic provider proxy", async () => {

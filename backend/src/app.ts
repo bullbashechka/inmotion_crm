@@ -1,4 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
+import type { Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import {
   ApiErrorResponseSchema,
   AssignRoleRequestSchema,
@@ -26,11 +28,13 @@ import {
 } from "@inmotion-crm/contracts";
 
 import { registerRoute, type RoutePolicyVariables } from "./http/route-policy";
+import { canonicalizeUsername, hashSecret } from "./auth/crypto";
 import { AuthServiceError, type AuthService } from "./auth/service";
 import { AuthorizationError, EmployeeServiceError, type EmployeeService } from "./access/employees";
 import { RoleServiceError, type RoleService } from "./access/roles";
 
 type AppVariables = RoutePolicyVariables;
+type AppContext = Context<{ Variables: AppVariables }>;
 
 export type RuntimeConfig = {
   appEnvironment: AppEnvironment;
@@ -43,16 +47,26 @@ export type RuntimeConfig = {
     providerServiceRoleKey: string;
     providerNamespace: string;
     tokenEncryptionKey: string;
+    apiPublicOrigin: string;
     recoveryCallbackUrl: string;
     recoveryCompleteUrl: string;
   };
 };
 
 export type AppDependencies = {
-  authService?: Pick<AuthService, "authenticate" | "signIn" | "refreshSession" | "continueSession" | "revokeSession" | "changePassword" | "requestPasswordRecovery" | "completePasswordRecovery" | "resetPasswordWithRecoveryGrant">;
+  authService?: Pick<AuthService, "authenticate" | "signIn" | "refreshSession" | "continueSession" | "revokeSession" | "revokeSessionByRefreshToken" | "changePassword" | "requestPasswordRecovery" | "completePasswordRecovery" | "resetPasswordWithRecoveryGrant">;
+  authRateLimiters?: {
+    identity: { limit(input: { key: string }): Promise<{ success: boolean }> };
+    source: { limit(input: { key: string }): Promise<{ success: boolean }> };
+  };
   employeeService?: Pick<EmployeeService, "createEmployee" | "listEmployees" | "getEmployee" | "unlockAccount" | "issueTemporaryPassword" | "offboardEmployee" | "rehireEmployee">;
   roleService?: Pick<RoleService, "assignRole" | "revokeRole" | "setEmployeePermissionOverride" | "publishRoleRevision">;
 };
+
+const defaultErrorResponse = {
+  content: { "application/json": { schema: ApiErrorResponseSchema } },
+  description: "Ошибка запроса",
+} as const;
 
 const healthRoute = createRoute({
   method: "get",
@@ -71,6 +85,7 @@ const healthRoute = createRoute({
       },
       description: "Состояние API и совместимость клиента",
     },
+    default: defaultErrorResponse,
   },
 });
 
@@ -82,7 +97,9 @@ const signInRoute = createRoute({
     200: { content: { "application/json": { schema: SignInResponseSchema } }, description: "Сессия CRM создана" },
     401: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Неверные данные" },
     423: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Вход временно заблокирован" },
+    429: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Слишком много попыток" },
     503: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Провайдер недоступен" },
+    default: defaultErrorResponse,
   },
 });
 
@@ -92,7 +109,9 @@ const refreshRoute = createRoute({
   responses: {
     200: { content: { "application/json": { schema: SignInResponseSchema } }, description: "Сессия CRM обновлена" },
     401: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Refresh-сессия недействительна" },
+    409: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Сессия уже продлевается в другой вкладке" },
     503: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Провайдер недоступен" },
+    default: defaultErrorResponse,
   },
 });
 
@@ -102,6 +121,7 @@ const sessionRoute = createRoute({
   responses: {
     200: { content: { "application/json": { schema: ContinueSessionResponseSchema } }, description: "Текущее состояние сессии" },
     401: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Сессия недействительна" },
+    default: defaultErrorResponse,
   },
 });
 
@@ -111,13 +131,14 @@ const continueRoute = createRoute({
   responses: {
     200: { content: { "application/json": { schema: ContinueSessionResponseSchema } }, description: "Сессия продлена" },
     409: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Окно продления ещё не открыто" },
+    default: defaultErrorResponse,
   },
 });
 
 const logoutRoute = createRoute({
   method: "post",
   path: "/api/v1/auth/logout",
-  responses: { 204: { description: "Сессия завершена" } },
+  responses: { 204: { description: "Сессия завершена" }, default: defaultErrorResponse },
 });
 
 const changePasswordRoute = createRoute({
@@ -127,7 +148,9 @@ const changePasswordRoute = createRoute({
   responses: {
     204: { description: "Пароль изменён; требуется новый вход" },
     401: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Пароль не подтверждён" },
+    409: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Смена пароля уже выполняется" },
     503: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Провайдер недоступен" },
+    default: defaultErrorResponse,
   },
 });
 
@@ -135,21 +158,26 @@ const passwordRecoveryRoute = createRoute({
   method: "post",
   path: "/api/v1/auth/password/recovery",
   request: { body: { content: { "application/json": { schema: PasswordRecoveryRequestSchema } } } },
-  responses: { 202: { description: "Ответ не раскрывает наличие учётной записи" } },
+  responses: {
+    202: { description: "Ответ не раскрывает наличие учётной записи" },
+    429: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Слишком много запросов" },
+    503: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Ограничитель или провайдер недоступен" },
+    default: defaultErrorResponse,
+  },
 });
 
 const passwordRecoveryCallbackRoute = createRoute({
   method: "get",
   path: "/api/v1/auth/recovery/callback",
   request: { query: z.object({ challenge: z.string().uuid(), state: z.string().min(32), code: z.string().min(8) }) },
-  responses: { 303: { description: "Одноразовый recovery grant выдан только в HttpOnly cookie" } },
+  responses: { 303: { description: "Одноразовый recovery grant выдан только в HttpOnly cookie" }, default: defaultErrorResponse },
 });
 
 const passwordRecoveryResetRoute = createRoute({
   method: "post",
   path: "/api/v1/auth/recovery/reset",
   request: { body: { content: { "application/json": { schema: PasswordRecoveryResetRequestSchema } } } },
-  responses: { 204: { description: "Пароль восстановлен; требуется обычный вход" } },
+  responses: { 204: { description: "Пароль восстановлен; требуется обычный вход" }, default: defaultErrorResponse },
 });
 
 const createEmployeeRoute = createRoute({
@@ -160,6 +188,7 @@ const createEmployeeRoute = createRoute({
     201: { content: { "application/json": { schema: CreateEmployeeResponseSchema } }, description: "Сотрудник создан и ожидает выдачи временного пароля" },
     403: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Недостаточно прав" },
     409: { content: { "application/json": { schema: ApiErrorResponseSchema } }, description: "Конфликт учётной записи" },
+    default: defaultErrorResponse,
   },
 });
 
@@ -168,6 +197,7 @@ const listEmployeesRoute = createRoute({
   path: "/api/v1/employees",
   responses: {
     200: { content: { "application/json": { schema: EmployeeListResponseSchema } }, description: "Список сотрудников, доступный текущему пользователю" },
+    default: defaultErrorResponse,
   },
 });
 
@@ -177,6 +207,7 @@ const employeeDetailRoute = createRoute({
   request: { params: z.object({ employeeId: z.string().uuid() }) },
   responses: {
     200: { content: { "application/json": { schema: EmployeeDetailSchema } }, description: "Карточка сотрудника и итоговые права" },
+    default: defaultErrorResponse,
   },
 });
 
@@ -187,7 +218,7 @@ const unlockEmployeeRoute = createRoute({
     params: z.object({ employeeId: z.string().uuid() }),
     body: { content: { "application/json": { schema: UnlockEmployeeRequestSchema } } },
   },
-  responses: { 204: { description: "Временная блокировка снята" } },
+  responses: { 204: { description: "Временная блокировка снята" }, default: defaultErrorResponse },
 });
 
 const issueTemporaryPasswordRoute = createRoute({
@@ -197,7 +228,7 @@ const issueTemporaryPasswordRoute = createRoute({
     params: z.object({ employeeId: z.string().uuid() }),
     body: { content: { "application/json": { schema: IssueTemporaryPasswordRequestSchema } } },
   },
-  responses: { 200: { content: { "application/json": { schema: IssueTemporaryPasswordResponseSchema } }, description: "Одноразовый временный пароль" } },
+  responses: { 200: { content: { "application/json": { schema: IssueTemporaryPasswordResponseSchema } }, description: "Одноразовый временный пароль" }, default: defaultErrorResponse },
 });
 
 const offboardEmployeeRoute = createRoute({
@@ -207,7 +238,7 @@ const offboardEmployeeRoute = createRoute({
     params: z.object({ employeeId: z.string().uuid() }),
     body: { content: { "application/json": { schema: OffboardEmployeeRequestSchema } } },
   },
-  responses: { 204: { description: "Сотрудник уволен" } },
+  responses: { 204: { description: "Сотрудник уволен" }, default: defaultErrorResponse },
 });
 
 const rehireEmployeeRoute = createRoute({
@@ -217,7 +248,7 @@ const rehireEmployeeRoute = createRoute({
     params: z.object({ employeeId: z.string().uuid() }),
     body: { content: { "application/json": { schema: RehireEmployeeRequestSchema } } },
   },
-  responses: { 201: { content: { "application/json": { schema: CreateEmployeeResponseSchema } }, description: "Новая employment identity создана" } },
+  responses: { 201: { content: { "application/json": { schema: CreateEmployeeResponseSchema } }, description: "Новая employment identity создана" }, default: defaultErrorResponse },
 });
 
 const assignRoleRoute = createRoute({
@@ -227,7 +258,7 @@ const assignRoleRoute = createRoute({
     params: z.object({ employeeId: z.string().uuid() }),
     body: { content: { "application/json": { schema: AssignRoleRequestSchema } } },
   },
-  responses: { 204: { description: "Роль назначена" } },
+  responses: { 204: { description: "Роль назначена" }, default: defaultErrorResponse },
 });
 
 const revokeRoleRoute = createRoute({
@@ -237,7 +268,7 @@ const revokeRoleRoute = createRoute({
     params: z.object({ employeeId: z.string().uuid(), roleId: z.string().uuid() }),
     body: { content: { "application/json": { schema: RevokeRoleRequestSchema } } },
   },
-  responses: { 204: { description: "Роль отозвана" } },
+  responses: { 204: { description: "Роль отозвана" }, default: defaultErrorResponse },
 });
 
 const setPermissionOverrideRoute = createRoute({
@@ -247,7 +278,7 @@ const setPermissionOverrideRoute = createRoute({
     params: z.object({ employeeId: z.string().uuid(), permissionCode: z.string().min(1).max(120) }),
     body: { content: { "application/json": { schema: SetPermissionOverrideRequestSchema } } },
   },
-  responses: { 204: { description: "Индивидуальное исключение сохранено" } },
+  responses: { 204: { description: "Индивидуальное исключение сохранено" }, default: defaultErrorResponse },
 });
 
 const publishRoleRevisionRoute = createRoute({
@@ -257,7 +288,7 @@ const publishRoleRevisionRoute = createRoute({
     params: z.object({ roleId: z.string().uuid() }),
     body: { content: { "application/json": { schema: PublishRoleRevisionRequestSchema } } },
   },
-  responses: { 204: { description: "Новая редакция роли опубликована" } },
+  responses: { 204: { description: "Новая редакция роли опубликована" }, default: defaultErrorResponse },
 });
 
 function getClientCompatibility(
@@ -326,6 +357,9 @@ function getBearerToken(request: Request): string | null {
 }
 
 export function createApp(config: RuntimeConfig, dependencies: AppDependencies = {}) {
+  if (dependencies.authService !== undefined && dependencies.authRateLimiters === undefined) {
+    throw new Error("AuthService requires both identity and source rate limiters.");
+  }
   const app = new OpenAPIHono<{ Variables: AppVariables }>();
 
   app.use("*", async (context, next) => {
@@ -333,6 +367,12 @@ export function createApp(config: RuntimeConfig, dependencies: AppDependencies =
     context.set("correlationId", correlationId);
     context.set("corsOrigins", config.corsOrigins);
     if (dependencies.authService !== undefined) context.set("authService", dependencies.authService);
+    context.header("X-Correlation-ID", correlationId);
+    context.header("X-Content-Type-Options", "nosniff");
+    context.header("Referrer-Policy", "no-referrer");
+    context.header("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+    context.header("X-Frame-Options", "DENY");
+    if (config.appEnvironment === "production") context.header("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
 
     const isAllowedOrigin = setCorsHeaders(context.res.headers, context.req.raw, config.corsOrigins);
 
@@ -349,8 +389,16 @@ export function createApp(config: RuntimeConfig, dependencies: AppDependencies =
     }
 
     await next();
-    context.header("X-Correlation-ID", correlationId);
   });
+
+  const requestTooLarge = (context: Context) => context.json({
+    code: "REQUEST_BODY_TOO_LARGE",
+    message: "Размер запроса превышает допустимый предел.",
+    correlationId: context.res.headers.get("X-Correlation-ID") ?? crypto.randomUUID(),
+    retryable: false,
+  }, 413);
+  app.use("/api/v1/*", bodyLimit({ maxSize: 64 * 1024, onError: requestTooLarge }));
+  app.use("/api/v1/auth/*", bodyLimit({ maxSize: 16 * 1024, onError: requestTooLarge }));
 
   registerRoute(app, healthRoute, { access: "public" }, (context) => {
     const clientVersion = context.req.valid("header")["x-client-version"];
@@ -369,7 +417,10 @@ export function createApp(config: RuntimeConfig, dependencies: AppDependencies =
     const authService = dependencies.authService;
     if (authService === undefined) return authUnavailable(context);
     try {
-      const issued = await authService.signIn(context.req.valid("json"));
+      const input = context.req.valid("json");
+      const rateLimited = await enforceAuthRateLimit(context, dependencies.authRateLimiters!, "sign-in", input.login);
+      if (rateLimited !== null) return rateLimited;
+      const issued = await authService.signIn(input);
       context.header("Set-Cookie", refreshCookie(issued.refreshToken), { append: true });
       context.header("Cache-Control", "no-store");
       return context.json({ accessToken: issued.accessToken, accessTokenExpiresAt: issued.accessTokenExpiresAt, session: issued.session }, 200);
@@ -396,6 +447,7 @@ export function createApp(config: RuntimeConfig, dependencies: AppDependencies =
   registerRoute(app, sessionRoute, { access: "password_change", requiresOrigin: false }, (context) => {
     const authenticated = context.get("authenticated");
     if (authenticated === undefined) return context.json(authErrorPayload(context, "AUTHENTICATION_REQUIRED", "Требуется действующая сессия CRM.", false), 401);
+    context.header("Cache-Control", "no-store");
     return context.json({ session: authenticated.session }, 200);
   });
 
@@ -410,14 +462,16 @@ export function createApp(config: RuntimeConfig, dependencies: AppDependencies =
     }
   });
 
-  registerRoute(app, logoutRoute, { access: "crm_session" }, async (context) => {
+  registerRoute(app, logoutRoute, { access: "public", requiresOrigin: true }, async (context) => {
     const authService = dependencies.authService;
     const accessToken = getBearerToken(context.req.raw);
-    if (authService === undefined || accessToken === null) return context.json(authErrorPayload(context, "AUTHENTICATION_REQUIRED", "Требуется действующая сессия CRM.", false), 401);
+    const refreshToken = getRefreshToken(context.req.raw);
+    context.header("Cache-Control", "no-store");
+    if (authService === undefined) return authUnavailable(context);
     try {
-      await authService.revokeSession(accessToken);
+      if (refreshToken !== null) await authService.revokeSessionByRefreshToken(refreshToken);
+      else if (accessToken !== null) await authService.revokeSession(accessToken);
       context.header("Set-Cookie", refreshCookie(null), { append: true });
-      context.header("Cache-Control", "no-store");
       return context.body(null, 204);
     } catch (error) {
       return authError(context, error);
@@ -442,7 +496,10 @@ export function createApp(config: RuntimeConfig, dependencies: AppDependencies =
     const authService = dependencies.authService;
     if (authService === undefined) return authUnavailable(context);
     try {
-      await authService.requestPasswordRecovery(context.req.valid("json").login);
+      const login = context.req.valid("json").login;
+      const rateLimited = await enforceAuthRateLimit(context, dependencies.authRateLimiters!, "recovery", login);
+      if (rateLimited !== null) return rateLimited;
+      await authService.requestPasswordRecovery(login);
       return context.body(null, 202);
     } catch (error) {
       return authError(context, error);
@@ -674,43 +731,71 @@ export function createApp(config: RuntimeConfig, dependencies: AppDependencies =
 
 export { ApiErrorResponseSchema };
 
-function authErrorPayload(context: { get(key: "correlationId"): string }, code: string, message: string, retryable: boolean) {
+async function enforceAuthRateLimit(
+  context: AppContext,
+  rateLimiters: NonNullable<AppDependencies["authRateLimiters"]>,
+  action: "sign-in" | "recovery",
+  login: string,
+) {
+  const canonicalLogin = canonicalizeUsername(login) ?? login.trim().toLowerCase();
+  const source = context.req.raw.headers.get("CF-Connecting-IP") ?? "unknown-source";
+  const [identityHash, sourceHash] = await Promise.all([
+    hashSecret(canonicalLogin),
+    hashSecret(source),
+  ]);
+  let outcomes: readonly [{ success: boolean }, { success: boolean }];
+  try {
+    outcomes = await Promise.all([
+      rateLimiters.identity.limit({ key: `${action}:identity:${identityHash}` }),
+      rateLimiters.source.limit({ key: `${action}:source:${sourceHash}` }),
+    ]);
+  } catch {
+    return context.json({
+      code: "AUTH_RATE_LIMIT_UNAVAILABLE",
+      message: "Служба защиты входа временно недоступна. Повторите попытку.",
+      correlationId: context.res.headers.get("X-Correlation-ID") ?? crypto.randomUUID(),
+      retryable: true,
+    }, 503);
+  }
+  if (outcomes.every((outcome) => outcome.success)) return null;
+  context.header("Retry-After", "60");
+  context.header("Cache-Control", "no-store");
+  return context.json({
+    code: "AUTH_RATE_LIMITED",
+    message: "Слишком много запросов. Повторите через минуту.",
+    correlationId: context.res.headers.get("X-Correlation-ID") ?? crypto.randomUUID(),
+    retryable: true,
+  }, 429);
+}
+
+function authErrorPayload(context: AppContext, code: string, message: string, retryable: boolean) {
   return { code, message, correlationId: context.get("correlationId"), retryable };
 }
 
-function authUnavailable(context: { get(key: "correlationId"): string }) {
-  return new Response(JSON.stringify(authErrorPayload(context, "AUTH_NOT_CONFIGURED", "Служба входа не настроена.", false)), {
-    status: 503,
-    headers: { "Content-Type": "application/json" },
-  });
+function authUnavailable(context: AppContext) {
+  return context.json(authErrorPayload(context, "AUTH_NOT_CONFIGURED", "Служба входа не настроена.", false), 503);
 }
 
-function authError(context: { get(key: "correlationId"): string; json: (value: unknown, status: 401 | 403 | 409 | 423 | 503) => Response }, error: unknown): Response {
+function authError(context: AppContext, error: unknown) {
   if (error instanceof AuthServiceError) return context.json(authErrorPayload(context, error.code, error.message, error.retryable), error.status);
   throw error;
 }
 
-function employeeServiceUnavailable(context: { get(key: "correlationId"): string }) {
-  return new Response(JSON.stringify(authErrorPayload(context, "EMPLOYEE_SERVICE_UNAVAILABLE", "Служба управления сотрудниками не настроена.", false)), {
-    status: 503,
-    headers: { "Content-Type": "application/json" },
-  });
+function employeeServiceUnavailable(context: AppContext) {
+  return context.json(authErrorPayload(context, "EMPLOYEE_SERVICE_UNAVAILABLE", "Служба управления сотрудниками не настроена.", false), 503);
 }
 
-function employeeError(context: { get(key: "correlationId"): string; json: (value: unknown, status: 403 | 404 | 409 | 422 | 503) => Response }, error: unknown): Response {
+function employeeError(context: AppContext, error: unknown) {
   if (error instanceof AuthorizationError) return context.json(authErrorPayload(context, error.code, error.message, false), 403);
   if (error instanceof EmployeeServiceError) return context.json(authErrorPayload(context, error.code, error.message, error.retryable), error.status);
   throw error;
 }
 
-function roleServiceUnavailable(context: { get(key: "correlationId"): string }) {
-  return new Response(JSON.stringify(authErrorPayload(context, "ROLE_SERVICE_UNAVAILABLE", "Служба управления ролями не настроена.", false)), {
-    status: 503,
-    headers: { "Content-Type": "application/json" },
-  });
+function roleServiceUnavailable(context: AppContext) {
+  return context.json(authErrorPayload(context, "ROLE_SERVICE_UNAVAILABLE", "Служба управления ролями не настроена.", false), 503);
 }
 
-function roleError(context: { get(key: "correlationId"): string; json: (value: unknown, status: 403 | 404 | 409 | 422) => Response }, error: unknown): Response {
+function roleError(context: AppContext, error: unknown) {
   if (error instanceof AuthorizationError) return context.json(authErrorPayload(context, error.code, error.message, false), 403);
   if (error instanceof RoleServiceError) return context.json(authErrorPayload(context, error.code, error.message, false), error.status);
   throw error;

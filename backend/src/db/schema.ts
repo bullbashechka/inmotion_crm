@@ -10,6 +10,7 @@ import {
   pgSchema,
   text,
   timestamp,
+  type AnyPgColumn,
   unique,
   uniqueIndex,
   uuid,
@@ -48,7 +49,7 @@ export const employees = crm.table("employees", {
   email: text("email").notNull(),
   contactEmail: text("contact_email"),
   recoveryEmail: text("recovery_email").notNull(),
-  currentEmploymentEpochId: uuid("current_employment_epoch_id").references(() => employmentEpochs.id, { onDelete: "restrict" }),
+  currentEmploymentEpochId: uuid("current_employment_epoch_id").references((): AnyPgColumn => employmentEpochs.id, { onDelete: "restrict" }),
   ...lifecycleColumns,
 }, (table) => [
   unique("employees_auth_subject_unique").on(table.authSubjectId),
@@ -98,6 +99,7 @@ export const employeeSecurityStates = crm.table("employee_security_states", {
   employmentEpochId: uuid("employment_epoch_id").references(() => employmentEpochs.id, { onDelete: "restrict" }),
   accessState: text("access_state").notNull().default("suspended"),
   credentialState: text("credential_state").notNull().default("unready"),
+  credentialOperationId: uuid("credential_operation_id"),
   loginFailureCount: integer("login_failure_count").notNull().default(0),
   loginLockedUntil: timestamp("login_locked_until", { withTimezone: true, mode: "date" }),
   loginFailureWindowStartedAt: timestamp("login_failure_window_started_at", { withTimezone: true, mode: "date" }),
@@ -115,6 +117,7 @@ export const employeeSecurityStates = crm.table("employee_security_states", {
     .where(sql`${table.employmentEpochId} IS NOT NULL`),
   check("employee_security_states_access_valid", sql`${table.accessState} IN ('active', 'suspended', 'security_quarantined', 'terminated')`),
   check("employee_security_states_credential_valid", sql`${table.credentialState} IN ('unready', 'temporary_password', 'ready', 'password_change_required', 'changing', 'reconciliation_required', 'disabled')`),
+  check("employee_security_states_credential_operation_valid", sql`(${table.credentialState} = 'changing') = (${table.credentialOperationId} IS NOT NULL)`),
   check("employee_security_states_failure_count_valid", sql`${table.loginFailureCount} BETWEEN 0 AND 5`),
   check("employee_security_states_temporary_password_expiry_valid", sql`(${table.credentialState} = 'temporary_password' AND ${table.temporaryPasswordExpiresAt} IS NOT NULL) OR ${table.credentialState} <> 'temporary_password'`),
   check("employee_security_states_session_epoch_positive", sql`${table.sessionEpoch} > 0`),
@@ -177,7 +180,7 @@ export const roles = crm.table("roles", {
   id: uuid("id").primaryKey(),
   code: text("code").notNull(),
   systemKind: text("system_kind").notNull().default("custom"),
-  currentRevisionId: uuid("current_revision_id").references(() => roleRevisions.id, { onDelete: "restrict" }),
+  currentRevisionId: uuid("current_revision_id").references((): AnyPgColumn => roleRevisions.id, { onDelete: "restrict" }),
   adminAssignable: integer("admin_assignable").notNull().default(0),
   archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
   authorizationRevision: integer("authorization_revision").notNull().default(1),
@@ -296,6 +299,20 @@ export const crmSessions = crm.table("crm_sessions", {
   check("crm_sessions_provider_refresh_ciphertext_not_blank", nonBlank(table.providerRefreshTokenCiphertext)),
 ]);
 
+/** A spent refresh hash briefly restores its encrypted successor, then detects replay. */
+export const crmRefreshTokenReplays = crm.table("crm_refresh_token_replays", {
+  refreshTokenHash: text("refresh_token_hash").primaryKey(),
+  sessionId: uuid("session_id").notNull().references(() => crmSessions.id, { onDelete: "cascade" }),
+  familyId: uuid("family_id").notNull(),
+  successorCiphertext: text("successor_ciphertext").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  index("crm_refresh_token_replays_expiry_idx").on(table.expiresAt),
+  check("crm_refresh_token_replays_hash_not_blank", nonBlank(table.refreshTokenHash)),
+  check("crm_refresh_token_replays_successor_ciphertext_not_blank", nonBlank(table.successorCiphertext)),
+]);
+
 /**
  * A durable, password-free record of every locally handled login attempt.
  * `attemptId` is supplied by the BFF client and makes a lost response safe to
@@ -309,8 +326,9 @@ export const authLoginAttempts = crm.table("auth_login_attempts", {
   providerAttempted: integer("provider_attempted").notNull().default(0),
   occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 }, (table) => [
+  index("auth_login_attempts_processing_lease_idx").on(table.occurredAt).where(sql`${table.outcome} = 'processing'`),
   check("auth_login_attempts_login_not_blank", nonBlank(table.canonicalLogin)),
-  check("auth_login_attempts_outcome_valid", sql`${table.outcome} IN ('succeeded', 'invalid_credentials', 'locked', 'inactive', 'provider_unavailable', 'reconciliation_required')`),
+  check("auth_login_attempts_outcome_valid", sql`${table.outcome} IN ('processing', 'succeeded', 'invalid_credentials', 'locked', 'inactive', 'provider_unavailable', 'reconciliation_required')`),
   check("auth_login_attempts_provider_attempted_bool", sql`${table.providerAttempted} IN (0, 1)`),
 ]);
 
@@ -320,23 +338,27 @@ export const authRecoveryChallenges = crm.table("auth_recovery_challenges", {
   employeeId: uuid("employee_id").notNull().references(() => employees.id, { onDelete: "restrict" }),
   employmentEpochId: uuid("employment_epoch_id").notNull().references(() => employmentEpochs.id, { onDelete: "restrict" }),
   authBindingId: uuid("auth_binding_id").notNull().references(() => authBindings.id, { onDelete: "restrict" }),
+  credentialEpochAtIssue: integer("credential_epoch_at_issue"),
   stateVerifierHash: text("state_verifier_hash").notNull(),
   codeVerifierCiphertext: text("code_verifier_ciphertext").notNull(),
   recoveryGrantHash: text("recovery_grant_hash"),
   state: text("state").notNull().default("pending"),
   expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  grantExpiresAt: timestamp("grant_expires_at", { withTimezone: true, mode: "date" }),
   verifiedAt: timestamp("verified_at", { withTimezone: true, mode: "date" }),
   consumedAt: timestamp("consumed_at", { withTimezone: true, mode: "date" }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("auth_recovery_challenges_one_active_per_employee_unique")
     .on(table.employeeId)
-    .where(sql`${table.state} IN ('pending', 'verified')`),
+    .where(sql`${table.state} = 'pending'`),
+  index("auth_recovery_challenges_employee_created_idx").on(table.employeeId, table.createdAt),
   index("auth_recovery_challenges_expiry_idx").on(table.expiresAt),
-  check("auth_recovery_challenges_state_valid", sql`${table.state} IN ('pending', 'verified', 'consumed', 'expired', 'quarantined')`),
+  check("auth_recovery_challenges_state_valid", sql`${table.state} IN ('pending', 'verified', 'consuming', 'consumed', 'expired', 'quarantined')`),
   check("auth_recovery_challenges_state_hash_not_blank", nonBlank(table.stateVerifierHash)),
   check("auth_recovery_challenges_verifier_not_blank", nonBlank(table.codeVerifierCiphertext)),
-  check("auth_recovery_challenges_grant_state_valid", sql`(${table.state} = 'verified' AND ${table.recoveryGrantHash} IS NOT NULL AND ${table.verifiedAt} IS NOT NULL) OR (${table.state} <> 'verified' AND ${table.recoveryGrantHash} IS NULL)`),
+  check("auth_recovery_challenges_credential_epoch_positive", sql`${table.credentialEpochAtIssue} IS NULL OR ${table.credentialEpochAtIssue} > 0`),
+  check("auth_recovery_challenges_grant_state_valid", sql`(${table.state} = 'verified' AND ${table.recoveryGrantHash} IS NOT NULL AND ${table.verifiedAt} IS NOT NULL AND ${table.grantExpiresAt} IS NOT NULL) OR (${table.state} <> 'verified' AND ${table.recoveryGrantHash} IS NULL)`),
 ]);
 
 export const securityOutbox = crm.table("security_outbox", {

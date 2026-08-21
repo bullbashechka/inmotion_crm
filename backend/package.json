@@ -7,11 +7,11 @@
     "dev": "wrangler dev --port 8787",
     "build": "wrangler deploy --dry-run",
     "typecheck": "tsc --noEmit",
-    "types": "wrangler types",
-    "types:check": "wrangler types --check",
+    "types": "wrangler types --env-file /dev/null",
+    "types:check": "wrangler types --env-file /dev/null --check",
     "test": "vitest run",
     "db:migrate": "bun scripts/migrate.ts",
-    "test:db": "bun scripts/require-test-database.ts && vitest run --config vitest.db.config.ts tests/database.integration.test.ts tests/integrity.integration.test.ts",
+    "test:db": "bun scripts/require-test-database.ts && vitest run --config vitest.db.config.ts tests/database.integration.test.ts tests/integrity.integration.test.ts tests/auth-service.integration.test.ts tests/auth-hardening-migration.integration.test.ts",
     "test:db:performance": "bun scripts/require-test-database.ts && vitest run --config vitest.db.config.ts tests/database.performance.test.ts",
     "auth:bootstrap-initial-leader": "bun scripts/bootstrap-initial-leader.ts",
     "db:schema:check": "drizzle-kit check --config drizzle.config.ts && bun scripts/check-schema.ts",
@@ -20,7 +20,7 @@
   "dependencies": {
     "@hono/zod-openapi": "1.5.1",
     "@inmotion-crm/contracts": "workspace:*",
-    "drizzle-orm": "0.44.7",
+    "drizzle-orm": "0.45.2",
     "hono": "4.12.31",
     "pg": "8.16.3",
     "zod": "4.4.3"

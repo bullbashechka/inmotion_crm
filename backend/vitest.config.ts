@@ -2,7 +2,8 @@ import { cloudflarePool, cloudflareTest } from "@cloudflare/vitest-pool-workers"
 import { defineConfig } from "vitest/config";
 
 const workerOptions = {
-  wrangler: { configPath: "./wrangler.test.jsonc" },
+  // Tests must never import developer credentials from .dev.vars/.env.
+  wrangler: { configPath: "./tests/wrangler.test.jsonc", secrets: { TEST_ONLY_NOOP: "unused" } },
 };
 
 export default defineConfig({

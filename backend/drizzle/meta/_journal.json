@@ -134,6 +134,20 @@
       "when": 1786632128700,
       "tag": "0018_leader_temporary_credential",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0019_identity_lifecycle_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786800001000,
+      "tag": "0020_auth_hardening",
+      "breakpoints": true
     }
   ]
 }

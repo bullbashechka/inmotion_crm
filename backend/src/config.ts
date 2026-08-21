@@ -53,6 +53,7 @@ function optionalAuthConfig(variables: RuntimeVariables, corsOrigins: readonly s
     providerServiceRoleKey: variables.SUPABASE_SERVICE_ROLE_KEY,
     providerNamespace: variables.AUTH_PROVIDER_NAMESPACE,
     tokenEncryptionKey: variables.AUTH_TOKEN_ENCRYPTION_KEY,
+    apiPublicOrigin: variables.API_PUBLIC_ORIGIN,
     recoveryCallbackUrl: variables.AUTH_RECOVERY_CALLBACK_URL,
     recoveryCompleteUrl: variables.AUTH_RECOVERY_COMPLETE_URL,
   };
@@ -63,21 +64,27 @@ function optionalAuthConfig(variables: RuntimeVariables, corsOrigins: readonly s
   const providerUrl = required(values.providerUrl, "SUPABASE_URL");
   const recoveryCallbackUrl = required(values.recoveryCallbackUrl, "AUTH_RECOVERY_CALLBACK_URL");
   const recoveryCompleteUrl = required(values.recoveryCompleteUrl, "AUTH_RECOVERY_COMPLETE_URL");
+  const apiPublicOrigin = required(values.apiPublicOrigin, "API_PUBLIC_ORIGIN");
   let provider: URL;
   let recoveryCallback: URL;
   let recoveryComplete: URL;
+  let publicApi: URL;
   try {
     provider = new URL(providerUrl);
     recoveryCallback = new URL(recoveryCallbackUrl);
     recoveryComplete = new URL(recoveryCompleteUrl);
+    publicApi = new URL(apiPublicOrigin);
   } catch {
     throw new Error("SUPABASE_URL и AUTH_RECOVERY_*_URL должны быть корректными URL.");
   }
-  if (provider.protocol !== "https:" || (environment === "production" && (recoveryCallback.protocol !== "https:" || recoveryComplete.protocol !== "https:"))) {
+  if (provider.protocol !== "https:" || (environment === "production" && (recoveryCallback.protocol !== "https:" || recoveryComplete.protocol !== "https:" || publicApi.protocol !== "https:"))) {
     throw new Error("Auth BFF в production требует HTTPS URL.");
   }
   if (recoveryCallback.pathname !== "/api/v1/auth/recovery/callback" || recoveryCallback.search !== "" || recoveryCallback.hash !== "") {
     throw new Error("AUTH_RECOVERY_CALLBACK_URL должен указывать ровно на /api/v1/auth/recovery/callback.");
+  }
+  if (publicApi.origin !== apiPublicOrigin || recoveryCallback.origin !== publicApi.origin) {
+    throw new Error("API_PUBLIC_ORIGIN должен быть точным origin Auth API, а AUTH_RECOVERY_CALLBACK_URL — его callback URL.");
   }
   if (!corsOrigins.includes(recoveryComplete.origin) || recoveryComplete.search !== "" || recoveryComplete.hash !== "") {
     throw new Error("AUTH_RECOVERY_COMPLETE_URL должен иметь exact origin из CORS_ORIGINS и не содержать query/hash.");
@@ -88,6 +95,7 @@ function optionalAuthConfig(variables: RuntimeVariables, corsOrigins: readonly s
     providerServiceRoleKey: required(values.providerServiceRoleKey, "SUPABASE_SERVICE_ROLE_KEY"),
     providerNamespace: required(values.providerNamespace, "AUTH_PROVIDER_NAMESPACE"),
     tokenEncryptionKey: required(values.tokenEncryptionKey, "AUTH_TOKEN_ENCRYPTION_KEY"),
+    apiPublicOrigin: publicApi.origin,
     recoveryCallbackUrl: recoveryCallback.toString(),
     recoveryCompleteUrl: recoveryComplete.toString(),
   };

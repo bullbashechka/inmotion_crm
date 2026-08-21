@@ -90,6 +90,9 @@ export function registerRoute<
 
     await next();
   });
+  // @ts-expect-error @hono/zod-openapi 1.5.1 cannot preserve its conditional
+  // RouteHandler identity through this generic policy wrapper under TypeScript 6.
+  // Every concrete handler is still checked at the registerRoute call site.
   app.openapi(route, handler);
 }
 

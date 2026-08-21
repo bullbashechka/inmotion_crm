@@ -77,6 +77,16 @@ export class RoleService {
     if (input.reason.trim() === "") throw new RoleServiceError("ROLE_CONFLICT", 422, "Укажите причину отзыва роли.");
     await this.withDatabase(async (database) => database.transaction(async (transaction) => {
       await this.accessControl.requirePermission(transaction, actor, "roles.assign", "all");
+      // Serialize every role mutation of this employee before counting assignments.
+      // Locking only the selected assignment allows two concurrent revocations to
+      // both observe the same remaining-count and remove the final two roles.
+      const target = await transaction.execute<{ employmentEpochId: string }>(sql`
+        SELECT employment_epoch_id AS "employmentEpochId"
+        FROM crm.employee_security_states
+        WHERE employee_id = ${input.employeeId}::uuid
+        FOR UPDATE
+      `);
+      if (target.rows[0] === undefined) throw new RoleServiceError("EMPLOYEE_NOT_FOUND", 404, "Активный сотрудник не найден.");
       const assignment = await transaction.execute<{ id: string; systemKind: string }>(sql`
         SELECT assignment.id, role.system_kind AS "systemKind"
         FROM crm.role_assignments AS assignment
@@ -95,7 +105,7 @@ export class RoleService {
       const remaining = await transaction.execute<{ count: string }>(sql`
         SELECT count(*) FROM crm.role_assignments
         WHERE employee_id = ${input.employeeId}::uuid
-          AND employment_epoch_id = (SELECT employment_epoch_id FROM crm.employee_security_states WHERE employee_id = ${input.employeeId}::uuid)::uuid
+          AND employment_epoch_id = ${target.rows[0].employmentEpochId}::uuid
           AND revoked_at IS NULL
       `);
       if (Number(remaining.rows[0]?.count ?? "0") <= 1) {

@@ -10,6 +10,11 @@
     "backend",
     "packages/*"
   ],
+  "overrides": {
+    "nanoid": "3.3.18",
+    "undici": "7.29.0",
+    "vite": "8.0.16"
+  },
   "scripts": {
     "dev": "bun run --filter '*' --parallel dev",
     "dev:webapp": "bun run --cwd webapp dev",
